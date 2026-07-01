@@ -1,4 +1,12 @@
-from fastapi import BackgroundTasks, Depends, FastAPI, status
+from contextlib import asynccontextmanager
+from pathlib import Path
+from dotenv import load_dotenv
+
+# Ensure environment variables are loaded (override any empty system variables)
+env_path = Path(__file__).resolve().parent.parent / ".env"
+load_dotenv(dotenv_path=env_path, override=True)
+
+from fastapi import BackgroundTasks, Depends, FastAPI, File, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
@@ -6,6 +14,8 @@ from sqlalchemy.orm import Session
 from .auth import CurrentUser, get_current_user
 from .database import SessionLocal, engine, get_db
 from .processor import process_log_file_task
+from .supabase import upload_to_supabase
+from .watcher import start_watcher, stop_watcher
 from . import models
 
 # Create database tables automatically
@@ -15,10 +25,19 @@ try:
 except Exception as e:
     print(f"Error initializing database tables: {e}")
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    observer = start_watcher()
+    try:
+        yield
+    finally:
+        stop_watcher(observer)
+
 app = FastAPI(
     title="Enterprise Log Monitoring & Threat Detection Platform API",
     description="API for ingesting logs, detecting threats, and querying logs via RAG",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan,
 )
 
 # Configure CORS
@@ -45,9 +64,6 @@ def read_root():
 def read_current_user(current_user: CurrentUser = Depends(get_current_user)):
     return current_user
 
-class LogFileUploadRequest(BaseModel):
-    filename: str
-
 class LogFileOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -59,14 +75,16 @@ class LogFileOut(BaseModel):
 
 @app.post("/api/v1/logs/upload", response_model=LogFileOut, status_code=status.HTTP_202_ACCEPTED)
 def upload_log_file(
-    payload: LogFileUploadRequest,
     background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    file_url = upload_to_supabase(file)
+
     log_file = models.LogFile(
-        filename=payload.filename,
-        file_url=f"local_storage/mock/{payload.filename}",
+        filename=file.filename,
+        file_url=file_url,
         status="processing",
         uploaded_by=current_user.id,
     )
