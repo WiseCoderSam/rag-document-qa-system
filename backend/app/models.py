@@ -24,6 +24,7 @@ class LogFile(Base):
 
     owner = relationship("User", back_populates="log_files")
     entries = relationship("LogEntry", back_populates="log_file", cascade="all, delete-orphan")
+    incidents = relationship("Incident", back_populates="log_file")
 
 class LogEntry(Base):
     __tablename__ = "log_entries"
@@ -45,6 +46,7 @@ class Incident(Base):
     __tablename__ = "incidents"
 
     id = Column(Integer, primary_key=True, index=True)
+    title = Column(String, nullable=False, server_default="") # short human-readable summary
     rule_name = Column(String, index=True, nullable=False) # e.g. "Brute force login"
     severity = Column(String, index=True, default="LOW") # LOW, MEDIUM, HIGH, CRITICAL
     description = Column(Text, nullable=False)
@@ -54,4 +56,7 @@ class Incident(Base):
     summary = Column(Text, nullable=True) # AI generated incident summary
     affected_user = Column(String, index=True, nullable=True)
     affected_ip = Column(String, index=True, nullable=True)
+    log_file_id = Column(Integer, ForeignKey("log_files.id", ondelete="CASCADE"), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    log_file = relationship("LogFile", back_populates="incidents")
