@@ -1,11 +1,19 @@
 import os
-import google.generativeai as genai
+import time
+
+from google import genai
+from google.genai import types
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
-# Initialize the Gemini API client if the key is provided
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# Initialize the client once at module level
+_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
+
+EMBEDDING_MODEL = "text-embedding-004"
+
+# Delay between per-text fallback calls, to stay under the free-tier
+# requests-per-minute limit when a single batched call isn't possible.
+EMBEDDING_RETRY_DELAY_SECONDS = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -17,19 +25,49 @@ def get_embedding(text: str) -> list[float]:
     Generate a 768-dimensional text embedding using text-embedding-004.
     Falls back to a zero-vector when no API key is configured.
     """
-    if not GEMINI_API_KEY:
+    if not _client:
         return [0.0] * 768
 
     try:
-        response = genai.embed_content(
-            model="models/text-embedding-004",
-            content=text,
-            task_type="retrieval_document",
+        response = _client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=text,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
         )
-        return response["embedding"]
+        return list(response.embeddings[0].values)
     except Exception as e:
         print(f"[ai] Error generating embedding: {e}")
         return [0.0] * 768
+
+
+def get_embeddings(texts: list[str]) -> list[list[float]]:
+    """
+    Batched version of get_embedding — embeds all of *texts* in a single
+    Gemini call. Falls back to a list of zero-vectors when no API key is
+    configured, and to one call per text (with a short delay between calls)
+    if the batched call itself fails, to stay under free-tier rate limits.
+    """
+    if not texts:
+        return []
+
+    if not _client:
+        return [[0.0] * 768 for _ in texts]
+
+    try:
+        response = _client.models.embed_content(
+            model=EMBEDDING_MODEL,
+            contents=texts,
+            config=types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT"),
+        )
+        return [list(emb.values) for emb in response.embeddings]
+    except Exception as e:
+        print(f"[ai] Batched embedding call failed, falling back to one call per text: {e}")
+
+    embeddings = []
+    for text in texts:
+        embeddings.append(get_embedding(text))
+        time.sleep(EMBEDDING_RETRY_DELAY_SECONDS)
+    return embeddings
 
 
 # ---------------------------------------------------------------------------
@@ -40,33 +78,32 @@ def generate_chat_response(prompt: str, context: str = "") -> str:
     """
     Generate a response from gemini-1.5-flash acting as a SOC analyst.
     """
-    if not GEMINI_API_KEY:
+    if not _client:
         return (
             "Gemini API Key is not configured. "
             "Please set the GEMINI_API_KEY environment variable to enable AI investigations."
         )
 
-    try:
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=(
-                "You are an expert Security Operations Center (SOC) analyst. "
-                "Your task is to investigate logs, summarize threats, map suspicious "
-                "behavior to MITRE ATT&CK techniques, and answer user investigation "
-                "queries based on the provided log context."
-            ),
+    full_content = prompt
+    if context:
+        full_content = (
+            f"Log context for investigation:\n---\n{context}\n---\n\n"
+            f"User Question: {prompt}"
         )
 
-        full_content = prompt
-        if context:
-            full_content = (
-                f"Log context for investigation:\n---\n{context}\n---\n\n"
-                f"User Question: {prompt}"
-            )
-
-        response = model.generate_content(
-            full_content,
-            generation_config={"temperature": 0.2},
+    try:
+        response = _client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=full_content,
+            config=types.GenerateContentConfig(
+                system_instruction=(
+                    "You are an expert Security Operations Center (SOC) analyst. "
+                    "Your task is to investigate logs, summarize threats, map suspicious "
+                    "behavior to MITRE ATT&CK techniques, and answer user investigation "
+                    "queries based on the provided log context."
+                ),
+                temperature=0.2,
+            ),
         )
         return response.text
     except Exception as e:
@@ -108,7 +145,6 @@ def summarize_incident(incident, related_entries: list) -> str:
     Build a structured prompt from an Incident and its related LogEntry rows
     and ask Gemini for a concise threat summary.
     """
-    # Build entry excerpt (cap at 20 lines to stay within token budget)
     log_lines = []
     for i, entry in enumerate(related_entries[:20], start=1):
         ts  = entry.timestamp.isoformat() if entry.timestamp else "N/A"

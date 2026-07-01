@@ -2,7 +2,7 @@
 Phase 4 — AI & RAG Pipeline Unit Tests
 ======================================
 All tests run fully offline:
-  - No live Gemini API calls (get_embedding / generate_chat_response are monkeypatched)
+  - No live Gemini API calls (get_embeddings / generate_chat_response are monkeypatched)
   - No database session (LogEntry / Incident constructed directly)
   - No network I/O
 
@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Unset key so ai.py doesn't try to call Gemini during import
 os.environ.pop("GEMINI_API_KEY", None)
 
-from app import ai, vector_store
+from app import ai, chunking, vector_store
 from app import models
 
 
@@ -49,6 +49,11 @@ def _stub_embedding(text: str) -> list[float]:
     # Normalize so inner-product behaves like cosine similarity
     norm = np.linalg.norm(vec)
     return (vec / norm).tolist()
+
+
+def _stub_embeddings(texts: list[str]) -> list[list[float]]:
+    """Batched form of _stub_embedding, matching ai.get_embeddings' signature."""
+    return [_stub_embedding(text) for text in texts]
 
 
 def _make_entry(entry_id: int, message: str, severity: str = "INFO") -> models.LogEntry:
@@ -86,30 +91,32 @@ def _make_incident(**kwargs) -> models.Incident:
 
 
 # ---------------------------------------------------------------------------
-# Test 1 — get_embedding falls back to zero-vector without an API key
+# Test 1 — get_embeddings falls back to zero-vectors without an API key
 # ---------------------------------------------------------------------------
 
-def test_get_embedding_no_key():
-    """With GEMINI_API_KEY unset, get_embedding must return 768 zeros."""
+def test_get_embeddings_no_key():
+    """With GEMINI_API_KEY unset, get_embeddings must return 768-zero vectors."""
     # Force the module-level key to empty (it was already unset above, but be explicit)
     original = ai.GEMINI_API_KEY
     ai.GEMINI_API_KEY = ""
     try:
-        result = ai.get_embedding("any text")
-        assert isinstance(result, list), "Expected a list"
-        assert len(result) == 768, f"Expected 768 dimensions, got {len(result)}"
-        assert all(v == 0.0 for v in result), "Expected all-zero fallback vector"
+        results = ai.get_embeddings(["any text", "another text"])
+        assert isinstance(results, list), "Expected a list"
+        assert len(results) == 2, f"Expected one vector per input text, got {len(results)}"
+        for result in results:
+            assert len(result) == 768, f"Expected 768 dimensions, got {len(result)}"
+            assert all(v == 0.0 for v in result), "Expected all-zero fallback vector"
     finally:
         ai.GEMINI_API_KEY = original
 
 
 # ---------------------------------------------------------------------------
-# Test 2 — add_entries + search returns ranked IDs
+# Test 2 — chunk_entries + add_chunks + search returns ranked IDs
 # ---------------------------------------------------------------------------
 
 def test_vector_store_add_and_search(monkeypatch):
-    """Adding 3 entries then searching should return a non-empty ranked list of IDs."""
-    monkeypatch.setattr(ai, "get_embedding", _stub_embedding)
+    """Adding 3 chunked entries then searching should return a non-empty ranked list of IDs."""
+    monkeypatch.setattr(ai, "get_embeddings", _stub_embeddings)
 
     entries = [
         _make_entry(101, "Failed login for user alice from 192.168.1.5", "WARNING"),
@@ -117,7 +124,8 @@ def test_vector_store_add_and_search(monkeypatch):
         _make_entry(103, "SQL injection attempt: UNION SELECT password FROM users", "CRITICAL"),
     ]
 
-    vector_store.add_entries(entries)
+    chunks = chunking.chunk_entries(entries)
+    vector_store.add_chunks(chunks)
 
     results = vector_store.search("failed login brute force", k=3)
     assert isinstance(results, list), "search() must return a list"
@@ -131,7 +139,7 @@ def test_vector_store_add_and_search(monkeypatch):
 
 def test_vector_store_save_and_load(monkeypatch, tmp_path):
     """Index persisted to a temp dir and reloaded must have the same ntotal."""
-    monkeypatch.setattr(ai, "get_embedding", _stub_embedding)
+    monkeypatch.setattr(ai, "get_embeddings", _stub_embeddings)
 
     # Redirect store paths to tmp_path
     monkeypatch.setattr(vector_store, "_STORE_DIR", tmp_path)
@@ -142,26 +150,28 @@ def test_vector_store_save_and_load(monkeypatch, tmp_path):
         _make_entry(201, "User bob logged in successfully"),
         _make_entry(202, "Firewall rule denied traffic from 203.0.113.77"),
     ]
-    vector_store.add_entries(entries)
+    # Both entries fit under CHUNK_SIZE, so they collapse into a single chunk/vector.
+    chunks = chunking.chunk_entries(entries)
+    vector_store.add_chunks(chunks)
     vector_store.save()
 
     # Verify files exist
     assert (tmp_path / "index.faiss").exists(), "index.faiss not written"
     assert (tmp_path / "id_map.json").exists(), "id_map.json not written"
 
-    # Verify ID map content
+    # Verify ID map content — one chunk, listing both member entry ids
     saved_map = json.loads((tmp_path / "id_map.json").read_text())
-    assert saved_map == [201, 202], f"ID map mismatch: {saved_map}"
+    assert saved_map == [[201, 202]], f"ID map mismatch: {saved_map}"
 
     # Reset and reload
     vector_store._reset()
     vector_store.load()
 
     import faiss
-    # The internal index should have 2 vectors after reload
+    # The internal index should have 1 chunk vector after reload
     assert vector_store._INDEX is not None, "_INDEX should be set after load()"
-    assert vector_store._INDEX.ntotal == 2, f"Expected 2 vectors after reload, got {vector_store._INDEX.ntotal}"
-    assert vector_store._ID_MAP == [201, 202], f"ID map after reload: {vector_store._ID_MAP}"
+    assert vector_store._INDEX.ntotal == 1, f"Expected 1 chunk vector after reload, got {vector_store._INDEX.ntotal}"
+    assert vector_store._ID_MAP == [[201, 202]], f"ID map after reload: {vector_store._ID_MAP}"
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +183,7 @@ def test_answer_query_empty_index(monkeypatch):
     When the FAISS index is empty, search() returns [] and answer_query()
     returns the 'no logs' graceful message instead of raising an exception.
     """
-    monkeypatch.setattr(ai, "get_embedding", _stub_embedding)
+    monkeypatch.setattr(ai, "get_embeddings", _stub_embeddings)
 
     # Index is empty (reset by autouse fixture)
     results = vector_store.search("any question", k=5)
