@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend_storage:/app/storage
+    environment:
+      - DATABASE_URL=sqlite:///./sql_app.db
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-supersecretkeyfortestinglocalraglogmonitoring}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      # Avoid mounting node_modules & dist from host to container to prevent conflicts
+      - /app/node_modules
+      - /app/dist
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - VITE_SUPABASE_URL=${SUPABASE_URL:-}
+      - VITE_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY:-}
+    depends_on:
+      - backend
+    restart: always
+
+volumes:
+  backend_storage:
