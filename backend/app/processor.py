@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 from sqlalchemy.orm import Session
 
-from . import models
+from . import models, vector_store
 from .parser import parse_log_line
 from .rules import run_detection_rules
 
@@ -47,10 +47,14 @@ def process_log_file_task(file_id: int, db: Session) -> None:
         if entries:
             db.bulk_insert_mappings(models.LogEntry, entries)
 
-            # Transient (unpersisted) objects are enough for rule evaluation -
-            # they only need attribute access, not identity in the session.
+            # Transient (unpersisted) objects are enough for rule evaluation
+            # and embedding — they only need attribute access, not DB identity.
             entry_objects = [models.LogEntry(**e) for e in entries]
             run_detection_rules(db, entry_objects, log_file)
+
+            # Build / update the FAISS index for RAG queries.
+            vector_store.add_entries(entry_objects)
+            vector_store.save()
 
         log_file.status = "completed"
         db.commit()
