@@ -7,7 +7,13 @@ TEST_SECRET = "test_secret_key"
 os.environ["SUPABASE_JWT_SECRET"] = TEST_SECRET
 
 # Import auth modules after setting env variables to ensure it initializes properly
+import app.auth as auth_module
 from app.auth import get_current_user, CurrentUser, HTTPAuthorizationCredentials
+
+# app.auth reloads the real .env with override=True at import time, which clobbers
+# the dummy secret above whenever a real SUPABASE_JWT_SECRET is configured locally.
+# Patch the module-level constant directly so this test is isolated from .env.
+auth_module.SUPABASE_JWT_SECRET = TEST_SECRET
 
 def run_tests():
     print("Running token validation tests...")
