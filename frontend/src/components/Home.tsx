@@ -2,9 +2,11 @@ import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
 import { Dashboard } from "@/components/Dashboard"
+import { Documents } from "@/components/Documents"
 import { IncidentTimeline } from "@/components/IncidentTimeline"
 import { InvestigationChat } from "@/components/InvestigationChat"
 import { LogSearch } from "@/components/LogSearch"
+import { LogUpload } from "@/components/LogUpload"
 import { useAuth } from "@/context/AuthContext"
 import { apiFetch } from "@/lib/api"
 
@@ -17,13 +19,15 @@ interface UserProfile {
 // Kept generic on purpose: this file just switches over the active tab and
 // renders whichever panel is wired up, rather than encoding any
 // panel-specific logic here.
-type Tab = "dashboard" | "search" | "chat" | "timeline"
+type Tab = "dashboard" | "search" | "chat" | "timeline" | "documents" | "logs"
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "dashboard", label: "Dashboard" },
+  { id: "logs", label: "Upload Logs" },
   { id: "search", label: "Search" },
   { id: "chat", label: "Chat" },
   { id: "timeline", label: "Timeline" },
+  { id: "documents", label: "Documents" },
 ]
 
 export function Home() {
@@ -37,9 +41,16 @@ export function Home() {
   // needing its own incident-fetch logic. Do not remove this when touching
   // Task 5.3's code — it depends on this state existing here.
   const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null)
+  const [chatDocumentId, setChatDocumentId] = useState<number | null>(null)
 
   const handleLaunchChatForIncident = (incidentId: number) => {
     setSelectedIncidentId(incidentId)
+    setActiveTab("chat")
+  }
+
+  const handleChatWithDocument = (documentId: number) => {
+    setChatDocumentId(documentId)
+    setSelectedIncidentId(null)
     setActiveTab("chat")
   }
 
@@ -83,19 +94,27 @@ export function Home() {
 
       <main className="flex-1">
         {activeTab === "dashboard" && session && <Dashboard session={session} />}
+        {activeTab === "logs" && session && <LogUpload session={session} />}
         {activeTab === "search" && session && <LogSearch session={session} />}
         {activeTab === "chat" && session && (
           // key remounts (resets conversation state) whenever the scope
           // changes, e.g. general chat -> a specific incident's chat.
           <InvestigationChat
-            key={selectedIncidentId ?? "general"}
+            key={selectedIncidentId ?? chatDocumentId ?? "general"}
             session={session}
             incidentId={selectedIncidentId ?? undefined}
-            onClearScope={() => setSelectedIncidentId(null)}
+            fileId={chatDocumentId ?? undefined}
+            onClearScope={() => {
+              setSelectedIncidentId(null)
+              setChatDocumentId(null)
+            }}
           />
         )}
         {activeTab === "timeline" && session && (
           <IncidentTimeline session={session} onLaunchChat={handleLaunchChatForIncident} />
+        )}
+        {activeTab === "documents" && session && (
+          <Documents session={session} onChatWithDocument={handleChatWithDocument} />
         )}
       </main>
     </div>

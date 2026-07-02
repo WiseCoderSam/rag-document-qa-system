@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from .auth import CurrentUser, get_current_user
 from .database import SessionLocal, engine, get_db
+from .doc_processor import process_document_task
 from .processor import process_log_file_task
 from .supabase import upload_to_supabase
 from .watcher import start_watcher, stop_watcher
@@ -93,6 +94,7 @@ class LogFileOut(BaseModel):
     file_url: str
     status: str
     uploaded_by: str
+    uploaded_at: datetime
 
 
 @app.post("/api/v1/logs/upload", response_model=LogFileOut, status_code=status.HTTP_202_ACCEPTED)
@@ -120,6 +122,20 @@ def upload_log_file(
     return log_file
 
 
+@app.get("/api/v1/logs", response_model=list[LogFileOut])
+def list_log_files(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Lists log files uploaded by the current user, most recent first."""
+    return (
+        db.query(models.LogFile)
+        .filter(models.LogFile.uploaded_by == current_user.id)
+        .order_by(models.LogFile.uploaded_at.desc())
+        .all()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Phase 4 — RAG Query
 # ---------------------------------------------------------------------------
@@ -144,8 +160,11 @@ def query_logs(
     Returns an AI-generated answer grounded in the top-5 matching log lines,
     together with the source LogEntry IDs used as context. Results are
     restricted to the caller's own log entries (see vector_store.search).
+    kind="log" also keeps this log-only endpoint from surfacing DocumentChunk
+    matches now that the same index holds uploaded-document chunks too.
     """
-    source_ids = vector_store.search(body.question, current_user.id, k=5)
+    results = vector_store.search(body.question, current_user.id, k=5, kind="log")
+    source_ids = [r["id"] for r in results]
 
     if not source_ids:
         return QueryResponse(
@@ -422,5 +441,123 @@ def get_log_entries(
         .join(models.LogFile, models.LogEntry.file_id == models.LogFile.id)
         .filter(models.LogFile.uploaded_by == current_user.id)
         .filter(models.LogEntry.id.in_(id_list))
+        .all()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Document Q&A — PDF upload, library, and citation resolution
+# ---------------------------------------------------------------------------
+
+class DocumentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    filename: str
+    file_url: str
+    page_count: int | None
+    status: str
+    uploaded_by: str
+    uploaded_at: datetime
+
+
+class DocumentChunkOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    document_id: int
+    chunk_index: int
+    text: str
+
+
+@app.post("/api/v1/documents/upload", response_model=DocumentOut, status_code=status.HTTP_202_ACCEPTED)
+async def upload_document(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    # Read the bytes now — FastAPI closes the upload stream after this
+    # request returns, so the background task can't read from `file` later.
+    file_bytes = await file.read()
+    await file.seek(0)
+    file_url = upload_to_supabase(file)
+
+    document = models.Document(
+        filename=file.filename,
+        file_url=file_url,
+        status="processing",
+        uploaded_by=current_user.id,
+    )
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+
+    background_tasks.add_task(process_document_task, document.id, file_bytes, SessionLocal())
+
+    return document
+
+
+@app.get("/api/v1/documents", response_model=list[DocumentOut])
+def list_documents(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return (
+        db.query(models.Document)
+        .filter(models.Document.uploaded_by == current_user.id)
+        .order_by(models.Document.uploaded_at.desc())
+        .all()
+    )
+
+
+@app.get("/api/v1/documents/chunks", response_model=list[DocumentChunkOut])
+def get_document_chunks_by_ids(
+    ids: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Resolves a comma-separated list of DocumentChunk ids (e.g. ?ids=1,2,3)
+    back into full chunk text. Document chunk ids share the same FAISS
+    index as LogEntry ids, so this is the document-mode counterpart to
+    GET /api/v1/logs/entries used to resolve /api/v1/chat citations.
+    """
+    try:
+        id_list = [int(part) for part in ids.split(",") if part.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids must be a comma-separated list of integers.")
+
+    if not id_list:
+        return []
+
+    return (
+        db.query(models.DocumentChunk)
+        .join(models.Document, models.DocumentChunk.document_id == models.Document.id)
+        .filter(models.Document.uploaded_by == current_user.id)
+        .filter(models.DocumentChunk.id.in_(id_list))
+        .all()
+    )
+
+
+@app.get("/api/v1/documents/{document_id}/chunks", response_model=list[DocumentChunkOut])
+def get_document_chunks(
+    document_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    document = (
+        db.query(models.Document)
+        .filter(models.Document.id == document_id)
+        .filter(models.Document.uploaded_by == current_user.id)
+        .first()
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found.")
+
+    return (
+        db.query(models.DocumentChunk)
+        .filter(models.DocumentChunk.document_id == document_id)
+        .order_by(models.DocumentChunk.chunk_index)
         .all()
     )

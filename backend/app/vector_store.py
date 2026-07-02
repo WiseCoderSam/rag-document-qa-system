@@ -1,18 +1,28 @@
 """
-Singleton FAISS vector store for log entry chunk embeddings.
+Singleton FAISS vector store for log entry AND document chunk embeddings.
+Both share one flat index; every vector is tagged with a *kind* ("log" or
+"document") alongside user_id/file_id.
 
-Each FAISS vector corresponds to a *chunk* (a window of log lines) produced
-by app.chunking, tagged with the owning user_id and file_id.  IndexFlatIP
-has no native metadata filtering, so search() oversamples from the flat
-index and filters by user_id/file_id in Python — this is what enforces
-per-user data isolation, since without it any authenticated user's query
-could retrieve any other user's log lines.
+Each FAISS vector corresponds to a *chunk* (a window of log lines, or a
+slice of an uploaded document) produced by app.chunking / app.doc_processor,
+tagged with the owning user_id, file_id, and kind. IndexFlatIP has no native
+metadata filtering, so search() oversamples from the flat index and filters
+by user_id/file_id/kind in Python — this is what enforces per-user data
+isolation, since without it any authenticated user's query could retrieve
+any other user's log lines or documents.
+
+`file_id` is only unique *within* a kind: LogFile.id and Document.id are
+independent autoincrement sequences in separate tables, so a LogFile and a
+Document can legitimately share the same numeric id. Callers that scope a
+search to a specific file MUST also pass `kind`, or two unrelated files
+(one a log, one a document) with the same id will bleed into each other's
+results.
 
 Public API
 ----------
-add_chunks(chunks, user_id, file_id) — embed a list of chunk dicts and insert into the index
-add_entries(entries, user_id, file_id) — convenience: chunk then embed raw LogEntry objects
-search(query, user_id, k, file_id) — embed query and return flat list of matching LogEntry IDs owned by user_id
+add_chunks(chunks, user_id, file_id, kind) — embed a list of chunk dicts and insert into the index
+add_entries(entries, user_id, file_id) — convenience: chunk then embed raw LogEntry objects (kind="log")
+search(query, user_id, k, file_id, kind) — embed query and return matching {"id", "kind"} dicts owned by user_id
 save() / load()     — persist index and metadata to disk
 _reset()            — test-only: clear all in-memory state
 """
@@ -56,22 +66,31 @@ def _ensure_index():
 # Public API
 # ---------------------------------------------------------------------------
 
-def add_chunks(chunks: list[dict], user_id: str, file_id: int) -> None:
+def add_chunks(chunks: list[dict], user_id: str, file_id: int, kind: str = "log") -> None:
     """
     Embed each chunk's ``text`` (via ``ai.get_embeddings``) and add to the
-    index, tagging every resulting vector with *user_id* and *file_id* so
-    ``search()`` can later restrict matches to their owner.
+    index, tagging every resulting vector with *user_id*, *file_id*, and
+    *kind* so ``search()`` can later restrict matches to their owner (and,
+    when scoped, to the right file of the right kind).
 
     Parameters
     ----------
     chunks:
-        Output of ``app.chunking.chunk_entries`` — each dict has
+        Output of ``app.chunking.chunk_entries`` (or the equivalent shape
+        from ``app.doc_processor``) — each dict has
         ``{"text": str, "entry_ids": list[int]}``.
     user_id:
-        Owning user's id (``LogFile.uploaded_by``) — required so a caller
-        can never retrieve another user's log lines via search().
+        Owning user's id (``LogFile.uploaded_by`` / ``Document.uploaded_by``)
+        — required so a caller can never retrieve another user's data via
+        search().
     file_id:
-        The source ``LogFile.id`` these chunks were parsed from.
+        The source row's id — ``LogFile.id`` when kind="log",
+        ``Document.id`` when kind="document". These are independent
+        autoincrement sequences in separate tables and can collide, which
+        is exactly why *kind* must be stored and filtered on too.
+    kind:
+        Either "log" (chunk['entry_ids'] are LogEntry ids) or "document"
+        (chunk['entry_ids'] are DocumentChunk ids).
     """
     if not chunks:
         return
@@ -91,6 +110,7 @@ def add_chunks(chunks: list[dict], user_id: str, file_id: int) -> None:
             "entry_ids": chunk["entry_ids"],
             "user_id": user_id,
             "file_id": file_id,
+            "kind": kind,
         })
 
     if not valid_vecs:
@@ -103,30 +123,43 @@ def add_chunks(chunks: list[dict], user_id: str, file_id: int) -> None:
         idx.add(matrix)
         _METADATA.extend(valid_meta)
 
-    print(f"[vector_store] Added {len(valid_vecs)} chunk vectors for user={user_id} file={file_id} (total: {_ensure_index().ntotal})")
+    print(f"[vector_store] Added {len(valid_vecs)} {kind} chunk vectors for user={user_id} file={file_id} (total: {_ensure_index().ntotal})")
 
 
 def add_entries(entries: list, user_id: str, file_id: int) -> None:
     """
     Convenience wrapper: chunk *entries* then call add_chunks(), tagging the
-    resulting vectors with *user_id* and *file_id*.
+    resulting vectors with *user_id*, *file_id*, and kind="log".
     Uses app.chunking defaults (CHUNK_SIZE=10, CHUNK_OVERLAP=2).
     """
     from .chunking import chunk_entries
-    add_chunks(chunk_entries(entries), user_id=user_id, file_id=file_id)
+    add_chunks(chunk_entries(entries), user_id=user_id, file_id=file_id, kind="log")
 
 
-def search(query: str, user_id: str, k: int = 5, file_id: int | None = None) -> list[int]:
+def search(
+    query: str,
+    user_id: str,
+    k: int = 5,
+    file_id: int | None = None,
+    kind: str | None = None,
+) -> list[dict]:
     """
-    Embed *query* and return the LogEntry IDs of the top-k matching chunks
-    that belong to *user_id* (and, if given, *file_id*).
+    Embed *query* and return the top-k matching chunks that belong to
+    *user_id* (and, if given, *file_id* + *kind*), as a ranked list of
+    ``{"id": int, "kind": "log" | "document"}`` dicts — *id* is a LogEntry
+    id when kind="log", a DocumentChunk id when kind="document".
+
+    *file_id* is only meaningful combined with *kind*, since LogFile.id and
+    Document.id are independent sequences that can collide (see module
+    docstring); passing *file_id* without *kind* would silently mix a log
+    file's chunks with an unrelated same-numbered document's chunks.
 
     IndexFlatIP has no native per-vector metadata filtering, so this
     searches the *entire* flat index (cheap — IndexFlatIP is already an
     exhaustive linear scan, so requesting all ntotal results costs the same
-    as requesting a handful) and then filters by user_id/file_id in ranked
-    order, stopping once k matching chunks have been collected. Returns []
-    when the index is empty or the user has no matching vectors.
+    as requesting a handful) and then filters by user_id/file_id/kind in
+    ranked order, stopping once k matching chunks have been collected.
+    Returns [] when the index is empty or the user has no matching vectors.
     """
     from .ai import get_embedding
 
@@ -139,8 +172,8 @@ def search(query: str, user_id: str, k: int = 5, file_id: int | None = None) -> 
         _scores, positions = idx.search(vec, idx.ntotal)
         metadata_snapshot = _METADATA
 
-    seen: set[int] = set()
-    result: list[int] = []
+    seen: set[tuple[str, int]] = set()
+    result: list[dict] = []
     matched_chunks = 0
     for pos in positions[0]:
         if matched_chunks >= k:
@@ -149,16 +182,23 @@ def search(query: str, user_id: str, k: int = 5, file_id: int | None = None) -> 
             continue
 
         meta = metadata_snapshot[pos]
+        # Vectors persisted before "kind" existed have no such key — they
+        # all predate the document-upload feature, so they're all logs.
+        meta_kind = meta.get("kind", "log")
+
         if meta["user_id"] != user_id:
             continue
         if file_id is not None and meta["file_id"] != file_id:
             continue
+        if kind is not None and meta_kind != kind:
+            continue
 
         matched_chunks += 1
         for entry_id in meta["entry_ids"]:
-            if entry_id not in seen:
-                seen.add(entry_id)
-                result.append(entry_id)
+            dedup_key = (meta_kind, entry_id)
+            if dedup_key not in seen:
+                seen.add(dedup_key)
+                result.append({"id": entry_id, "kind": meta_kind})
 
     return result
 

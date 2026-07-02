@@ -112,3 +112,42 @@ export async function getLogEntries(ids: number[], session: Session): Promise<Lo
   if (ids.length === 0) return []
   return apiFetch<LogEntryOut[]>(`/api/v1/logs/entries?ids=${ids.join(",")}`, session)
 }
+
+/** Matches LogFileOut in backend/app/main.py. */
+export interface LogFileOut {
+  id: number
+  filename: string
+  file_url: string
+  status: string
+  uploaded_by: string
+  uploaded_at: string
+}
+
+/** Matches DocumentOut in backend/app/main.py. */
+export interface DocumentOut {
+  id: number
+  filename: string
+  file_url: string
+  page_count: number | null
+  status: string
+  uploaded_by: string
+  uploaded_at: string
+}
+
+/** Matches DocumentChunkOut in backend/app/main.py. */
+export interface DocumentChunkOut {
+  id: number
+  document_id: number
+  chunk_index: number
+  text: string
+}
+
+/**
+ * Resolves document-mode chat citation ids back into full chunk text via
+ * GET /api/v1/documents/chunks?ids=... (backend/app/main.py). Returns []
+ * without a network call when *ids* is empty.
+ */
+export async function getDocumentChunks(ids: number[], session: Session): Promise<DocumentChunkOut[]> {
+  if (ids.length === 0) return []
+  return apiFetch<DocumentChunkOut[]>(`/api/v1/documents/chunks?ids=${ids.join(",")}`, session)
+}

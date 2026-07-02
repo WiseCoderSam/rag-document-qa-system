@@ -10,12 +10,31 @@ import { Input } from "@/components/ui/input"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import {
   apiFetch,
+  getDocumentChunks,
   getLogEntries,
   NO_MATCH_ANSWER,
   type ChatRequest,
   type ChatResponse,
+  type DocumentChunkOut,
   type LogEntryOut,
 } from "@/lib/api"
+
+// DocumentChunkOut has no log-specific fields (timestamp, severity, etc.) —
+// this adapts one into the LogEntryOut shape CitationBadge already renders,
+// so document-mode citations don't need a second badge/popover component.
+function chunkToLogEntry(chunk: DocumentChunkOut): LogEntryOut {
+  return {
+    id: chunk.id,
+    message: chunk.text,
+    timestamp: null,
+    severity: "INFO",
+    ip_address: null,
+    user_name: null,
+    hostname: null,
+    event_id: null,
+    file_id: chunk.document_id,
+  }
+}
 
 interface ChatTurn {
   id: number
@@ -80,7 +99,23 @@ export function InvestigationChat({ session, incidentId, fileId, onClearScope }:
       ])
 
       if (response.sources.length > 0) {
-        const resolved = await getLogEntries(response.sources, session)
+        let resolved: LogEntryOut[]
+        if (fileId !== undefined) {
+          // Document mode: sources are DocumentChunk ids, not LogEntry ids.
+          resolved = (await getDocumentChunks(response.sources, session)).map(chunkToLogEntry)
+        } else if (incidentId !== undefined) {
+          resolved = await getLogEntries(response.sources, session)
+        } else {
+          // General mode: the backend can now legitimately return a mix of
+          // log entry ids and document chunk ids in one response (see
+          // rag.py's kind-aware retrieve_context), so both must be
+          // resolved rather than trying one and falling back to the other.
+          const [logEntries, docChunks] = await Promise.all([
+            getLogEntries(response.sources, session),
+            getDocumentChunks(response.sources, session),
+          ])
+          resolved = [...logEntries, ...docChunks.map(chunkToLogEntry)]
+        }
         setEntries((prev) => {
           const next = new Map(prev)
           for (const entry of resolved) next.set(entry.id, entry)

@@ -22,6 +22,7 @@ backend/**/*.pyd
 backend/.pytest_cache/
 backend/.env
 backend/faiss_index/
+backend/vector_store/
 backend/local_storage/
 backend/storage/
 backend/*.db

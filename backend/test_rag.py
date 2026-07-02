@@ -159,6 +159,22 @@ def _seed_incident(db, log_file_id: int | None, affected_ip: str | None = None, 
     return incident
 
 
+def _seed_document(db, uploaded_by: str, filename: str = "test.pdf", status: str = "completed") -> int:
+    document = models.Document(filename=filename, file_url="local", status=status, uploaded_by=uploaded_by)
+    db.add(document)
+    db.commit()
+    db.refresh(document)
+    return document.id
+
+
+def _seed_document_chunk(db, document_id: int, text: str, chunk_index: int = 0) -> int:
+    chunk = models.DocumentChunk(document_id=document_id, chunk_index=chunk_index, text=text)
+    db.add(chunk)
+    db.commit()
+    db.refresh(chunk)
+    return chunk.id
+
+
 # ---------------------------------------------------------------------------
 # 1. Chunking (Task 1)
 # ---------------------------------------------------------------------------
@@ -232,8 +248,8 @@ def test_vector_store_search_never_crosses_users(monkeypatch):
     vector_store.add_entries(entries_a, user_id="user-a", file_id=1)
     vector_store.add_entries(entries_b, user_id="user-b", file_id=2)
 
-    results_a = vector_store.search("failed login", "user-a", k=5)
-    results_b = vector_store.search("failed login", "user-b", k=5)
+    results_a = [r["id"] for r in vector_store.search("failed login", "user-a", k=5)]
+    results_b = [r["id"] for r in vector_store.search("failed login", "user-b", k=5)]
 
     assert results_a == [101]
     assert results_b == [201]
@@ -257,8 +273,46 @@ def test_vector_store_search_can_filter_by_file_id(monkeypatch):
     vector_store.add_entries([_make_entry(301, "Failed login for user carol from 172.16.0.1")], user_id="user-a", file_id=1)
     vector_store.add_entries([_make_entry(302, "Failed login for user carol from 172.16.0.1")], user_id="user-a", file_id=2)
 
-    results = vector_store.search("failed login", "user-a", k=5, file_id=1)
-    assert results == [301], f"Expected only file_id=1's entry, got {results}"
+    results = vector_store.search("failed login", "user-a", k=5, file_id=1, kind="log")
+    assert results == [{"id": 301, "kind": "log"}], f"Expected only file_id=1's entry, got {results}"
+
+
+def test_vector_store_search_filters_by_kind_even_with_matching_file_id(monkeypatch):
+    """
+    LogFile.id and Document.id are independent sequences that can collide
+    (both starting at 1) — a scoped search must not let a log file and a
+    same-numbered document bleed into each other's results.
+    """
+    monkeypatch.setattr(ai, "get_embeddings", _stub_embeddings)
+    monkeypatch.setattr(ai, "get_embedding", _stub_embedding)
+
+    vector_store.add_chunks(
+        [{"text": "Failed login for user carol from 172.16.0.1", "entry_ids": [401]}],
+        user_id="user-a", file_id=1, kind="log",
+    )
+    vector_store.add_chunks(
+        [{"text": "Failed login for user carol from 172.16.0.1", "entry_ids": [9001]}],
+        user_id="user-a", file_id=1, kind="document",
+    )
+
+    log_results = vector_store.search("failed login", "user-a", k=5, file_id=1, kind="log")
+    doc_results = vector_store.search("failed login", "user-a", k=5, file_id=1, kind="document")
+
+    assert log_results == [{"id": 401, "kind": "log"}]
+    assert doc_results == [{"id": 9001, "kind": "document"}]
+
+
+def test_vector_store_search_legacy_metadata_without_kind_defaults_to_log(monkeypatch):
+    """Vectors persisted before the kind field existed must still resolve as logs."""
+    monkeypatch.setattr(ai, "get_embeddings", _stub_embeddings)
+    monkeypatch.setattr(ai, "get_embedding", _stub_embedding)
+
+    vector_store.add_entries([_make_entry(501, "legacy entry")], user_id="user-a", file_id=1)
+    # Simulate metadata persisted by a version of the code with no "kind" key.
+    del vector_store._METADATA[0]["kind"]
+
+    results = vector_store.search("legacy entry", "user-a", k=5)
+    assert results == [{"id": 501, "kind": "log"}]
 
 
 def test_vector_store_save_and_load_round_trip(monkeypatch):
@@ -281,7 +335,7 @@ def test_vector_store_save_and_load_round_trip(monkeypatch):
     assert (store_dir / "id_map.json").exists(), "id_map.json not written"
 
     saved_map = json.loads((store_dir / "id_map.json").read_text())
-    assert saved_map == [{"entry_ids": [201, 202], "user_id": "user-a", "file_id": 7}], (
+    assert saved_map == [{"entry_ids": [201, 202], "user_id": "user-a", "file_id": 7, "kind": "log"}], (
         f"Metadata mismatch: {saved_map}"
     )
 
@@ -290,7 +344,7 @@ def test_vector_store_save_and_load_round_trip(monkeypatch):
 
     assert vector_store._INDEX is not None, "_INDEX should be set after load()"
     assert vector_store._INDEX.ntotal == 1, f"Expected 1 chunk vector after reload, got {vector_store._INDEX.ntotal}"
-    assert vector_store._METADATA == [{"entry_ids": [201, 202], "user_id": "user-a", "file_id": 7}], (
+    assert vector_store._METADATA == [{"entry_ids": [201, 202], "user_id": "user-a", "file_id": 7, "kind": "log"}], (
         f"Metadata after reload: {vector_store._METADATA}"
     )
 
@@ -402,6 +456,66 @@ def test_chat_with_incident_id_owned_by_another_user_returns_404(monkeypatch):
     )
 
     assert resp.status_code == 404
+
+
+def test_chat_scoped_to_document_does_not_leak_same_numbered_log_file(monkeypatch):
+    """
+    LogFile.id and Document.id are independent autoincrement sequences, so
+    a user's first log file and first document both land on id=1 — meaning
+    entry_id and chunk_id below are themselves equal, and a sources-id
+    comparison alone can't tell the two apart. What must actually differ is
+    the *content* handed to the LLM: chat scoped to the document must be
+    grounded in the document's text, never the same-numbered log entry's.
+    """
+    monkeypatch.setattr(ai, "get_embeddings", _stub_embeddings)
+    monkeypatch.setattr(ai, "get_embedding", _stub_embedding)
+
+    captured = {}
+
+    def fake_chat_response(prompt: str, context: str = "") -> str:
+        captured["context"] = context
+        return "Mock doc answer."
+
+    monkeypatch.setattr(ai, "generate_chat_response", fake_chat_response)
+
+    db = _new_db()
+    log_file_id = _seed_log_file(db, uploaded_by="collide-user")
+    entry_id = _seed_entry(db, log_file_id, "Failed login for user hacker1 from 10.10.10.10")
+    document_id = _seed_document(db, uploaded_by="collide-user")
+    chunk_id = _seed_document_chunk(db, document_id, "The quarterly security policy requires MFA.")
+    db.close()
+
+    assert log_file_id == document_id and entry_id == chunk_id, (
+        "test assumes both sequences start at 1 in a fresh DB, so the two ids collide"
+    )
+
+    vector_store.add_entries(
+        [_make_entry(entry_id, "Failed login for user hacker1 from 10.10.10.10")],
+        user_id="collide-user",
+        file_id=log_file_id,
+    )
+    vector_store.add_chunks(
+        [{"text": "The quarterly security policy requires MFA.", "entry_ids": [chunk_id]}],
+        user_id="collide-user",
+        file_id=document_id,
+        kind="document",
+    )
+
+    resp = client.post(
+        "/api/v1/chat",
+        json={"question": "what does the policy say?", "file_id": document_id},
+        headers=_auth_headers("collide-user"),
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["sources"] == [chunk_id]
+    assert "quarterly security policy" in captured["context"], (
+        f"Document-scoped chat should be grounded in the document's own text, got: {captured['context']}"
+    )
+    assert "hacker1" not in captured["context"], (
+        f"Document-scoped chat leaked the same-numbered log file's content: {captured['context']}"
+    )
 
 
 # ---------------------------------------------------------------------------
