@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 from sqlalchemy.orm import Session
 
-from . import models, vector_store
+from . import models, summarizer, vector_store
 from .parser import parse_log_line
 from .rules import run_detection_rules
 
@@ -45,15 +45,35 @@ def process_log_file_task(file_id: int, db: Session) -> None:
             entries.append(parsed)
 
         if entries:
-            db.bulk_insert_mappings(models.LogEntry, entries)
+            # return_defaults=True populates each dict's generated "id" back
+            # after insert — without it every entry stays id=None below, so
+            # chunk_entries()/vector_store can never attribute a chunk match
+            # back to a real LogEntry row (RAG query source_ids would all be
+            # NULL and match nothing).
+            db.bulk_insert_mappings(models.LogEntry, entries, return_defaults=True)
 
             # Transient (unpersisted) objects are enough for rule evaluation
             # and embedding — they only need attribute access, not DB identity.
             entry_objects = [models.LogEntry(**e) for e in entries]
-            run_detection_rules(db, entry_objects, log_file)
+            incidents = run_detection_rules(db, entry_objects, log_file)
 
-            # Build / update the FAISS index for RAG queries.
-            vector_store.add_entries(entry_objects)
+            # AI incident summaries (prd.md feature #6). A summarization
+            # failure for one incident must not fail the whole ingestion —
+            # log it and leave that incident's summary null, same as the
+            # outer except below leaves log_file.status="failed" rather
+            # than raising.
+            for incident in incidents:
+                try:
+                    incident.summary = summarizer.summarize_incident(db, incident)
+                except Exception as e:
+                    print(f"Failed to summarize incident ({incident.rule_name}) for file {log_file.id}: {e}")
+
+            # Build / update the FAISS index for RAG queries. add_entries()
+            # chunks internally (app.chunking), so this stays a handful of
+            # Gemini embedding calls per file instead of one per log line.
+            # user_id/file_id tag every vector so search() can enforce
+            # per-user data isolation (see vector_store.search).
+            vector_store.add_entries(entry_objects, user_id=log_file.uploaded_by, file_id=log_file.id)
             vector_store.save()
 
         log_file.status = "completed"
