@@ -389,3 +389,38 @@ def search_logs(
         .limit(limit)
         .all()
     )
+
+
+@app.get("/api/v1/logs/entries", response_model=list[LogEntryOut])
+def get_log_entries(
+    ids: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Resolves a comma-separated list of LogEntry ids (e.g. ?ids=1,2,3) back
+    into full log content. This exists specifically to resolve the raw
+    `sources: number[]` ids returned by POST /api/v1/chat and
+    /api/v1/query into renderable citations — those endpoints don't
+    attach timestamp/message to each source id, and GET
+    /api/v1/logs/search can't be reused for this since it filters by
+    field value, not by an id list. Results are restricted to log files
+    uploaded by the caller; entries owned by another user, or nonexistent
+    ids, are silently omitted rather than erroring. The response order is
+    not guaranteed to match *ids* — callers should key results by id.
+    """
+    try:
+        id_list = [int(part) for part in ids.split(",") if part.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids must be a comma-separated list of integers.")
+
+    if not id_list:
+        return []
+
+    return (
+        db.query(models.LogEntry)
+        .join(models.LogFile, models.LogEntry.file_id == models.LogFile.id)
+        .filter(models.LogFile.uploaded_by == current_user.id)
+        .filter(models.LogEntry.id.in_(id_list))
+        .all()
+    )

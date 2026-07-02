@@ -673,3 +673,71 @@ def test_log_search_limit_is_capped(monkeypatch):
         "/api/v1/logs/search", params={"hostname": "cap-host", "limit": 1000}, headers=_auth_headers("search-user-a")
     )
     assert len(resp.json()) == 3
+
+
+# ---------------------------------------------------------------------------
+# 7. GET /api/v1/logs/entries — resolves chat/query citation ids to content
+# ---------------------------------------------------------------------------
+
+def test_log_entries_resolves_ids_to_full_content():
+    db = _new_db()
+    file_id = _seed_log_file(db, uploaded_by="entries-user")
+    entry_id = _seed_entry(db, file_id, "Failed login for user alice from 1.2.3.4", ip_address="1.2.3.4")
+    db.close()
+
+    resp = client.get("/api/v1/logs/entries", params={"ids": str(entry_id)}, headers=_auth_headers("entries-user"))
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body) == 1
+    assert body[0]["id"] == entry_id
+    assert body[0]["message"] == "Failed login for user alice from 1.2.3.4"
+    assert body[0]["ip_address"] == "1.2.3.4"
+
+
+def test_log_entries_accepts_comma_separated_ids():
+    db = _new_db()
+    file_id = _seed_log_file(db, uploaded_by="entries-user")
+    id_a = _seed_entry(db, file_id, "line a")
+    id_b = _seed_entry(db, file_id, "line b")
+    id_c = _seed_entry(db, file_id, "line c")
+    db.close()
+
+    resp = client.get(
+        "/api/v1/logs/entries", params={"ids": f"{id_a},{id_b}"}, headers=_auth_headers("entries-user")
+    )
+
+    assert resp.status_code == 200
+    returned_ids = {row["id"] for row in resp.json()}
+    assert returned_ids == {id_a, id_b}
+    assert id_c not in returned_ids
+
+
+def test_log_entries_never_returns_another_users_entries():
+    db = _new_db()
+    file_id_a = _seed_log_file(db, uploaded_by="entries-user-a")
+    file_id_b = _seed_log_file(db, uploaded_by="entries-user-b", filename="other.log")
+    id_a = _seed_entry(db, file_id_a, "user a's line")
+    id_b = _seed_entry(db, file_id_b, "user b's line")
+    db.close()
+
+    resp = client.get(
+        "/api/v1/logs/entries", params={"ids": f"{id_a},{id_b}"}, headers=_auth_headers("entries-user-a")
+    )
+
+    assert resp.status_code == 200
+    returned_ids = {row["id"] for row in resp.json()}
+    assert returned_ids == {id_a}, f"user-a's request leaked user-b's entry: {returned_ids}"
+
+
+def test_log_entries_unknown_or_missing_ids_are_silently_omitted():
+    resp = client.get("/api/v1/logs/entries", params={"ids": "99999"}, headers=_auth_headers("entries-user"))
+
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_log_entries_rejects_non_integer_ids():
+    resp = client.get("/api/v1/logs/entries", params={"ids": "abc"}, headers=_auth_headers("entries-user"))
+
+    assert resp.status_code == 400
