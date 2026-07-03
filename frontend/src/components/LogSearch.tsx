@@ -37,13 +37,14 @@ const PAGE_SIZE = 25
 // LogEntry.severity values come from backend/app/parser.py (INFO / WARNING /
 // ERROR / CRITICAL) — a different vocabulary from Incident.severity's
 // LOW/MEDIUM/HIGH/CRITICAL used in Dashboard.tsx, so this is its own small
-// map rather than a shared one. Same "soft muted vs soft/solid destructive"
-// treatment though, built only from existing CSS variables — no invented colors.
+// map rather than a shared one. Both vocabularies sit on the same four-step
+// severity ramp (--sev-* in src/index.css): INFO=steel, WARNING=amber,
+// ERROR=ember, CRITICAL=alarm red.
 const SEVERITY_BADGE_CLASS: Record<string, string> = {
-  INFO: "bg-muted text-muted-foreground",
-  WARNING: "bg-muted text-foreground",
-  ERROR: "bg-destructive/10 text-destructive",
-  CRITICAL: "bg-destructive/25 text-destructive",
+  INFO: "bg-sev-low/15 text-sev-low",
+  WARNING: "bg-sev-medium/15 text-sev-medium",
+  ERROR: "bg-sev-high/15 text-sev-high",
+  CRITICAL: "bg-sev-critical/20 text-sev-critical",
 }
 
 function severityBadgeClass(severity: string): string {
@@ -231,16 +232,16 @@ export function LogSearch({ session }: LogSearchProps) {
                 <TableBody>
                   {results.map((entry) => (
                     <TableRow key={entry.id} className="cursor-pointer" onClick={() => setSelectedEntry(entry)}>
-                      <TableCell className="text-muted-foreground">
+                      <TableCell className="font-mono text-xs text-muted-foreground">
                         {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "N/A"}
                       </TableCell>
                       <TableCell>
-                        <Badge className={severityBadgeClass(entry.severity)}>{entry.severity}</Badge>
+                        <Badge className={severityBadgeClass(entry.severity) + " font-mono"}>{entry.severity}</Badge>
                       </TableCell>
-                      <TableCell>{entry.ip_address ?? "—"}</TableCell>
-                      <TableCell>{entry.user_name ?? "—"}</TableCell>
-                      <TableCell>{entry.hostname ?? "—"}</TableCell>
-                      <TableCell className="max-w-xs truncate whitespace-nowrap">{entry.message}</TableCell>
+                      <TableCell className="font-mono text-xs">{entry.ip_address ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">{entry.user_name ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">{entry.hostname ?? "—"}</TableCell>
+                      <TableCell className="max-w-xs truncate font-mono text-xs whitespace-nowrap">{entry.message}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -281,7 +282,7 @@ export function LogSearch({ session }: LogSearchProps) {
               <DetailRow label="File ID" value={String(selectedEntry.file_id)} />
               <div className="flex flex-col gap-1">
                 <span className="text-xs font-medium text-muted-foreground">Message</span>
-                <p className="rounded-md border border-border bg-muted/30 p-2 text-sm whitespace-pre-wrap">
+                <p className="rounded-md border border-border bg-muted/30 p-2 font-mono text-xs whitespace-pre-wrap">
                   {selectedEntry.message}
                 </p>
               </div>

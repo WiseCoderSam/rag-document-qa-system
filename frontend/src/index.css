@@ -2,50 +2,76 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * "Night watch" console theme — dark-only by design (index.html pins
+ * class="dark" so the shadcn-style dark: variants in the ui components stay
+ * active). The palette is a deep indigo-slate field plus one severity ramp:
+ *
+ *   steel (LOW/INFO) → signal amber (MEDIUM/WARNING) → ember (HIGH/ERROR)
+ *   → alarm red (CRITICAL)
+ *
+ * Every severity-colored element in the app (chart bars, badges, timeline
+ * nodes, the header hairline) draws from these four --sev-* variables so the
+ * two severity vocabularies (Incident: LOW/MEDIUM/HIGH/CRITICAL, LogEntry:
+ * INFO/WARNING/ERROR/CRITICAL) map onto one visual scale.
+ */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --radius: 0.5rem;
+
+  --background: oklch(0.16 0.018 262);
+  --foreground: oklch(0.93 0.008 250);
+  --card: oklch(0.205 0.02 262);
+  --card-foreground: oklch(0.93 0.008 250);
+  --popover: oklch(0.235 0.022 262);
+  --popover-foreground: oklch(0.93 0.008 250);
+  --primary: oklch(0.8 0.14 80);
+  --primary-foreground: oklch(0.23 0.05 80);
+  --secondary: oklch(0.28 0.024 262);
+  --secondary-foreground: oklch(0.93 0.008 250);
+  --muted: oklch(0.26 0.022 262);
+  --muted-foreground: oklch(0.7 0.02 255);
+  --accent: oklch(0.28 0.024 262);
+  --accent-foreground: oklch(0.93 0.008 250);
+  --destructive: oklch(0.66 0.21 26);
+  --border: oklch(0.93 0.01 250 / 10%);
+  --input: oklch(0.93 0.01 250 / 14%);
+  --ring: oklch(0.76 0.12 80);
+
+  --sev-low: oklch(0.72 0.06 245);
+  --sev-medium: oklch(0.8 0.14 80);
+  --sev-high: oklch(0.72 0.17 45);
+  --sev-critical: oklch(0.66 0.21 26);
+  --ok: oklch(0.76 0.13 155);
 }
 
+/* class="dark" is always set; kept identical to :root so dark: variants and
+   the base tokens can never disagree. */
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --background: oklch(0.16 0.018 262);
+  --foreground: oklch(0.93 0.008 250);
+  --card: oklch(0.205 0.02 262);
+  --card-foreground: oklch(0.93 0.008 250);
+  --popover: oklch(0.235 0.022 262);
+  --popover-foreground: oklch(0.93 0.008 250);
+  --primary: oklch(0.8 0.14 80);
+  --primary-foreground: oklch(0.23 0.05 80);
+  --secondary: oklch(0.28 0.024 262);
+  --secondary-foreground: oklch(0.93 0.008 250);
+  --muted: oklch(0.26 0.022 262);
+  --muted-foreground: oklch(0.7 0.02 255);
+  --accent: oklch(0.28 0.024 262);
+  --accent-foreground: oklch(0.93 0.008 250);
+  --destructive: oklch(0.66 0.21 26);
+  --border: oklch(0.93 0.01 250 / 10%);
+  --input: oklch(0.93 0.01 250 / 14%);
+  --ring: oklch(0.76 0.12 80);
 }
 
 @theme inline {
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+  --font-display: "Chakra Petch", "IBM Plex Sans", ui-sans-serif, sans-serif;
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);
@@ -64,6 +90,11 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sev-low: var(--sev-low);
+  --color-sev-medium: var(--sev-medium);
+  --color-sev-high: var(--sev-high);
+  --color-sev-critical: var(--sev-critical);
+  --color-ok: var(--ok);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -75,6 +106,44 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  ::selection {
+    background: oklch(0.8 0.14 80 / 30%);
+  }
+}
+
+@layer utilities {
+  /* The signature severity spectrum, used as a hairline strip on the app
+     shell and the auth card. */
+  .severity-spectrum {
+    background: linear-gradient(
+      90deg,
+      var(--sev-low),
+      var(--sev-medium),
+      var(--sev-high),
+      var(--sev-critical)
+    );
+  }
+
+  .panel-enter {
+    animation: panel-enter 0.25s ease-out both;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .panel-enter {
+      animation: none;
+    }
+  }
+}
+
+@keyframes panel-enter {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }

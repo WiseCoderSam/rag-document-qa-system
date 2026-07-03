@@ -14,8 +14,8 @@ interface DocumentsProps {
 }
 
 function statusBadgeClass(status: string): string {
-  if (status === "completed") return "bg-green-500/15 text-green-700 dark:text-green-400"
-  if (status === "failed") return "bg-destructive/10 text-destructive"
+  if (status === "completed") return "bg-ok/15 text-ok"
+  if (status === "failed") return "bg-destructive/15 text-destructive"
   return "bg-muted text-muted-foreground"
 }
 
@@ -112,10 +112,10 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
                 >
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold">{doc.filename}</span>
-                      <Badge className={statusBadgeClass(doc.status)}>{doc.status}</Badge>
+                      <span className="font-mono text-sm font-medium">{doc.filename}</span>
+                      <Badge className={statusBadgeClass(doc.status) + " font-mono"}>{doc.status}</Badge>
                     </div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="font-mono text-xs text-muted-foreground">
                       {doc.page_count !== null && <span>{doc.page_count} pages · </span>}
                       {new Date(doc.uploaded_at).toLocaleString()}
                     </div>

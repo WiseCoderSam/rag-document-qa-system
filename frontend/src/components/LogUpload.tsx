@@ -13,8 +13,8 @@ interface LogUploadProps {
 }
 
 function statusBadgeClass(status: string): string {
-  if (status === "completed") return "bg-green-500/15 text-green-700 dark:text-green-400"
-  if (status === "failed") return "bg-destructive/10 text-destructive"
+  if (status === "completed") return "bg-ok/15 text-ok"
+  if (status === "failed") return "bg-destructive/15 text-destructive"
   return "bg-muted text-muted-foreground"
 }
 
@@ -111,10 +111,10 @@ export function LogUpload({ session }: LogUploadProps) {
                 >
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-bold">{logFile.filename}</span>
-                      <Badge className={statusBadgeClass(logFile.status)}>{logFile.status}</Badge>
+                      <span className="font-mono text-sm font-medium">{logFile.filename}</span>
+                      <Badge className={statusBadgeClass(logFile.status) + " font-mono"}>{logFile.status}</Badge>
                     </div>
-                    <div className="text-xs text-muted-foreground">
+                    <div className="font-mono text-xs text-muted-foreground">
                       {new Date(logFile.uploaded_at).toLocaleString()}
                     </div>
                   </div>

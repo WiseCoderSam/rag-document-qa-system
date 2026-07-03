@@ -14,27 +14,24 @@ function isSeverityLevel(value: string): value is SeverityLevel {
   return (SEVERITY_LEVELS as readonly string[]).includes(value)
 }
 
-// Explicit per-severity hues, as specified: CRITICAL red, HIGH orange, MEDIUM
-// yellow, LOW blue. Unlike Dashboard/LogSearch's severity treatments (which
-// reuse the theme's --destructive/--muted-foreground CSS vars at varying
-// opacity, since that palette has no orange/yellow), a timeline benefits
-// from strong, immediately distinguishable hues for quick scanning — so
-// these are deliberately literal Tailwind colors, not the semantic theme vars.
+// Node and badge colors come from the theme's severity ramp (--sev-* in
+// src/index.css) — the same scale used by the Dashboard chart/badges and
+// LogSearch's log-level badges, so severity reads identically everywhere.
 // backend/app/rules.py only ever emits HIGH or CRITICAL today (LOW is just
 // the column default per models.py:51); MEDIUM is kept anyway since the
 // schema allows it.
 const SEVERITY_NODE_CLASS: Record<SeverityLevel, string> = {
-  CRITICAL: "bg-red-500",
-  HIGH: "bg-orange-500",
-  MEDIUM: "bg-yellow-500",
-  LOW: "bg-blue-500",
+  CRITICAL: "bg-sev-critical",
+  HIGH: "bg-sev-high",
+  MEDIUM: "bg-sev-medium",
+  LOW: "bg-sev-low",
 }
 
 const SEVERITY_BADGE_CLASS: Record<SeverityLevel, string> = {
-  CRITICAL: "bg-red-500/15 text-red-600 dark:text-red-400",
-  HIGH: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
-  MEDIUM: "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400",
-  LOW: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
+  CRITICAL: "bg-sev-critical/20 text-sev-critical",
+  HIGH: "bg-sev-high/15 text-sev-high",
+  MEDIUM: "bg-sev-medium/15 text-sev-medium",
+  LOW: "bg-sev-low/15 text-sev-low",
 }
 
 function severityNodeClass(severity: string): string {
@@ -121,13 +118,13 @@ export function IncidentTimeline({ session, onLaunchChat }: IncidentTimelineProp
                   >
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="text-sm font-medium">{incident.rule_name}</span>
-                      <Badge className={severityBadgeClass(incident.severity)}>{incident.severity}</Badge>
-                      <span className="text-xs text-muted-foreground">
+                      <Badge className={severityBadgeClass(incident.severity) + " font-mono"}>{incident.severity}</Badge>
+                      <span className="font-mono text-xs text-muted-foreground">
                         {new Date(incident.created_at).toLocaleString()}
                       </span>
                     </div>
                     {/* Incident has no hostname column (see IncidentOut) — only affected_ip/affected_user. */}
-                    <p className="text-xs text-muted-foreground">
+                    <p className="font-mono text-xs text-muted-foreground">
                       {incident.affected_ip && <>IP: {incident.affected_ip} </>}
                       {incident.affected_user && <>User: {incident.affected_user}</>}
                       {!incident.affected_ip && !incident.affected_user && "No affected entities recorded."}

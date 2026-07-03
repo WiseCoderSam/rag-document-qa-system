@@ -41,72 +41,84 @@ export function Auth() {
   }
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-muted/30 p-4">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle className="text-xl">
-            {mode === "login" ? "Sign in" : "Create an account"}
-          </CardTitle>
-          <CardDescription>
-            {mode === "login"
-              ? "Sign in to investigate incidents and review logs."
-              : "Set up access to the log monitoring platform."}
-          </CardDescription>
-        </CardHeader>
-        <form onSubmit={handleSubmit}>
-          <CardContent className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="you@example.com"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                autoComplete={mode === "login" ? "current-password" : "new-password"}
-                minLength={6}
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            {info && <p className="text-sm text-muted-foreground">{info}</p>}
-          </CardContent>
-          <CardFooter className="flex flex-col gap-3">
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting
-                ? "Please wait..."
-                : mode === "login"
-                  ? "Sign in"
-                  : "Sign up"}
-            </Button>
-            <button
-              type="button"
-              className="text-sm text-muted-foreground underline-offset-4 hover:underline"
-              onClick={() => {
-                setMode(mode === "login" ? "signup" : "login")
-                setError(null)
-                setInfo(null)
-              }}
-            >
+    <div className="flex min-h-svh flex-col">
+      <div className="severity-spectrum h-0.5 shrink-0" aria-hidden="true" />
+      <div className="flex flex-1 flex-col items-center justify-center gap-6 p-4">
+        <div className="flex flex-col items-center gap-1 text-center">
+          <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
+            Security operations console
+          </p>
+          <h1 className="font-display text-2xl font-semibold tracking-tight">
+            Log Monitoring &amp; Threat Detection
+          </h1>
+        </div>
+
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle className="font-display text-xl">
+              {mode === "login" ? "Sign in" : "Create an account"}
+            </CardTitle>
+            <CardDescription>
               {mode === "login"
-                ? "Don't have an account? Sign up"
-                : "Already have an account? Sign in"}
-            </button>
-          </CardFooter>
-        </form>
-      </Card>
+                ? "Sign in to investigate incidents and review logs."
+                : "Set up access to the log monitoring platform."}
+            </CardDescription>
+          </CardHeader>
+          <form onSubmit={handleSubmit}>
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="email">Email</Label>
+                <Input
+                  id="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  required
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="password">Password</Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="••••••••"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  minLength={6}
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+              </div>
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              {info && <p className="text-sm text-muted-foreground">{info}</p>}
+            </CardContent>
+            <CardFooter className="flex flex-col gap-3">
+              <Button type="submit" className="w-full" disabled={submitting}>
+                {submitting
+                  ? "Please wait..."
+                  : mode === "login"
+                    ? "Sign in"
+                    : "Sign up"}
+              </Button>
+              <button
+                type="button"
+                className="text-sm text-muted-foreground underline-offset-4 hover:underline"
+                onClick={() => {
+                  setMode(mode === "login" ? "signup" : "login")
+                  setError(null)
+                  setInfo(null)
+                }}
+              >
+                {mode === "login"
+                  ? "Don't have an account? Sign up"
+                  : "Already have an account? Sign in"}
+              </button>
+            </CardFooter>
+          </form>
+        </Card>
+      </div>
     </div>
   )
 }

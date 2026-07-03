@@ -63,60 +63,76 @@ export function Home() {
   }, [session])
 
   return (
-    <div className="mx-auto flex min-h-svh max-w-6xl flex-col gap-4 p-4">
-      <header className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <h1 className="text-xl font-semibold">Log Monitoring & Threat Detection Platform</h1>
-          {profile && (
-            <p className="text-sm text-muted-foreground">
-              Signed in as {profile.email} ({profile.id})
+    <div className="flex min-h-svh flex-col">
+      <div className="severity-spectrum h-0.5 shrink-0" aria-hidden="true" />
+
+      <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-4 pt-5 pb-6">
+        <header className="flex flex-wrap items-end justify-between gap-3">
+          <div className="flex flex-col gap-1">
+            <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
+              Security operations console
             </p>
-          )}
-          {error && <p className="text-sm text-destructive">Failed to load profile: {error}</p>}
-        </div>
-        <Button variant="outline" onClick={signOut}>
-          Sign out
-        </Button>
-      </header>
-
-      <nav className="flex gap-2 border-b border-border pb-2">
-        {TABS.map((tab) => (
-          <Button
-            key={tab.id}
-            type="button"
-            variant={activeTab === tab.id ? "secondary" : "ghost"}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
+            <h1 className="font-display text-xl font-semibold tracking-tight">
+              Log Monitoring &amp; Threat Detection
+            </h1>
+            {profile && (
+              <p className="font-mono text-xs text-muted-foreground">{profile.email}</p>
+            )}
+            {error && <p className="text-sm text-destructive">Failed to load profile: {error}</p>}
+          </div>
+          <Button variant="outline" size="sm" onClick={signOut}>
+            Sign out
           </Button>
-        ))}
-      </nav>
+        </header>
 
-      <main className="flex-1">
-        {activeTab === "dashboard" && session && <Dashboard session={session} />}
-        {activeTab === "logs" && session && <LogUpload session={session} />}
-        {activeTab === "search" && session && <LogSearch session={session} />}
-        {activeTab === "chat" && session && (
-          // key remounts (resets conversation state) whenever the scope
-          // changes, e.g. general chat -> a specific incident's chat.
-          <InvestigationChat
-            key={selectedIncidentId ?? chatDocumentId ?? "general"}
-            session={session}
-            incidentId={selectedIncidentId ?? undefined}
-            fileId={chatDocumentId ?? undefined}
-            onClearScope={() => {
-              setSelectedIncidentId(null)
-              setChatDocumentId(null)
-            }}
-          />
-        )}
-        {activeTab === "timeline" && session && (
-          <IncidentTimeline session={session} onLaunchChat={handleLaunchChatForIncident} />
-        )}
-        {activeTab === "documents" && session && (
-          <Documents session={session} onChatWithDocument={handleChatWithDocument} />
-        )}
-      </main>
+        <nav className="flex gap-1 overflow-x-auto border-b border-border" aria-label="Console sections">
+          {TABS.map((tab) => {
+            const isActive = activeTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                aria-current={isActive ? "page" : undefined}
+                className={
+                  "-mb-px border-b-2 px-3 py-2 font-mono text-xs tracking-widest whitespace-nowrap uppercase transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50 " +
+                  (isActive
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:border-border hover:text-foreground")
+                }
+              >
+                {tab.label}
+              </button>
+            )
+          })}
+        </nav>
+
+        <main key={activeTab} className="panel-enter flex-1">
+          {activeTab === "dashboard" && session && <Dashboard session={session} />}
+          {activeTab === "logs" && session && <LogUpload session={session} />}
+          {activeTab === "search" && session && <LogSearch session={session} />}
+          {activeTab === "chat" && session && (
+            // key remounts (resets conversation state) whenever the scope
+            // changes, e.g. general chat -> a specific incident's chat.
+            <InvestigationChat
+              key={selectedIncidentId ?? chatDocumentId ?? "general"}
+              session={session}
+              incidentId={selectedIncidentId ?? undefined}
+              fileId={chatDocumentId ?? undefined}
+              onClearScope={() => {
+                setSelectedIncidentId(null)
+                setChatDocumentId(null)
+              }}
+            />
+          )}
+          {activeTab === "timeline" && session && (
+            <IncidentTimeline session={session} onLaunchChat={handleLaunchChatForIncident} />
+          )}
+          {activeTab === "documents" && session && (
+            <Documents session={session} onChatWithDocument={handleChatWithDocument} />
+          )}
+        </main>
+      </div>
     </div>
   )
 }

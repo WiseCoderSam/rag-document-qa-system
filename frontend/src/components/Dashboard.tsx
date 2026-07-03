@@ -17,23 +17,21 @@ import { exportToCSV, exportToPDF } from "@/lib/export"
 const SEVERITY_LEVELS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const
 type SeverityLevel = (typeof SEVERITY_LEVELS)[number]
 
-// Colors are drawn from the theme's existing CSS variables (src/index.css)
-// rather than invented hex values. This palette has no yellow/orange
-// "warning" hue, so LOW/MEDIUM reuse the neutral --muted-foreground and
-// HIGH/CRITICAL reuse --destructive, differentiated by opacity — the same
-// "soft vs solid" treatment the destructive Button/Badge variants already use.
+// Colors come from the theme's severity ramp (--sev-* in src/index.css) —
+// the same four variables that drive the timeline nodes, log-level badges,
+// and the header hairline, so severity reads identically everywhere.
 const SEVERITY_BAR_STYLE: Record<SeverityLevel, { fill: string; fillOpacity: number }> = {
-  LOW: { fill: "var(--muted-foreground)", fillOpacity: 0.5 },
-  MEDIUM: { fill: "var(--muted-foreground)", fillOpacity: 1 },
-  HIGH: { fill: "var(--destructive)", fillOpacity: 0.5 },
-  CRITICAL: { fill: "var(--destructive)", fillOpacity: 1 },
+  LOW: { fill: "var(--sev-low)", fillOpacity: 0.9 },
+  MEDIUM: { fill: "var(--sev-medium)", fillOpacity: 0.9 },
+  HIGH: { fill: "var(--sev-high)", fillOpacity: 0.9 },
+  CRITICAL: { fill: "var(--sev-critical)", fillOpacity: 0.9 },
 }
 
 const SEVERITY_BADGE_CLASS: Record<SeverityLevel, string> = {
-  LOW: "bg-muted text-muted-foreground",
-  MEDIUM: "bg-muted text-foreground",
-  HIGH: "bg-destructive/10 text-destructive",
-  CRITICAL: "bg-destructive/25 text-destructive",
+  LOW: "bg-sev-low/15 text-sev-low",
+  MEDIUM: "bg-sev-medium/15 text-sev-medium",
+  HIGH: "bg-sev-high/15 text-sev-high",
+  CRITICAL: "bg-sev-critical/20 text-sev-critical",
 }
 
 function isSeverityLevel(value: string): value is SeverityLevel {
@@ -97,8 +95,12 @@ export function Dashboard({ session }: DashboardProps) {
       <div className="grid gap-4 sm:grid-cols-3">
         <Card>
           <CardHeader>
-            <CardDescription>Total Incidents</CardDescription>
-            <CardTitle className="text-2xl">{incidents ? incidents.length : "…"}</CardTitle>
+            <CardDescription className="font-mono text-xs tracking-widest uppercase">
+              Total incidents
+            </CardDescription>
+            <CardTitle className="font-mono text-3xl font-medium tabular-nums">
+              {incidents ? incidents.length : "…"}
+            </CardTitle>
           </CardHeader>
         </Card>
 
@@ -107,19 +109,23 @@ export function Dashboard({ session }: DashboardProps) {
           /api/v1/files endpoint (only POST /api/v1/logs/upload exists), so
           there's no way to derive a real ingested-log-count or
           files-processed count. These are NOT backed by live data — the
-          dimmed styling and "(placeholder)" label are intentional, not a
+          dimmed styling and "Not tracked yet" label are intentional, not a
           loading state.
         */}
-        <Card className="opacity-60">
+        <Card className="opacity-50">
           <CardHeader>
-            <CardDescription>Logs Ingested (placeholder)</CardDescription>
-            <CardTitle className="text-2xl">—</CardTitle>
+            <CardDescription className="font-mono text-xs tracking-widest uppercase">
+              Logs ingested · not tracked yet
+            </CardDescription>
+            <CardTitle className="font-mono text-3xl font-medium">—</CardTitle>
           </CardHeader>
         </Card>
-        <Card className="opacity-60">
+        <Card className="opacity-50">
           <CardHeader>
-            <CardDescription>Files Processed (placeholder)</CardDescription>
-            <CardTitle className="text-2xl">—</CardTitle>
+            <CardDescription className="font-mono text-xs tracking-widest uppercase">
+              Files processed · not tracked yet
+            </CardDescription>
+            <CardTitle className="font-mono text-3xl font-medium">—</CardTitle>
           </CardHeader>
         </Card>
       </div>
@@ -216,15 +222,15 @@ export function Dashboard({ session }: DashboardProps) {
                       <div className="flex flex-col gap-1">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium">{incident.rule_name}</span>
-                          <Badge className={badgeClass}>{incident.severity}</Badge>
+                          <Badge className={badgeClass + " font-mono"}>{incident.severity}</Badge>
                         </div>
-                        <p className="text-xs text-muted-foreground">
+                        <p className="font-mono text-xs text-muted-foreground">
                           {incident.affected_ip && <>IP: {incident.affected_ip} </>}
                           {incident.affected_user && <>User: {incident.affected_user} </>}
                           {incident.mitre_technique && <>· MITRE {incident.mitre_technique}</>}
                         </p>
                       </div>
-                      <span className="text-xs whitespace-nowrap text-muted-foreground">
+                      <span className="font-mono text-xs whitespace-nowrap text-muted-foreground">
                         {new Date(incident.created_at).toLocaleString()}
                       </span>
                     </button>

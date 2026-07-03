@@ -241,7 +241,7 @@ function CitationBadge({
   return (
     <Popover>
       <PopoverTrigger className="cursor-pointer rounded-full">
-        <Badge className="bg-secondary text-secondary-foreground hover:bg-secondary/80">
+        <Badge className="bg-secondary font-mono text-secondary-foreground hover:bg-secondary/80">
           [{index}] Log Entry #{entryId}
         </Badge>
       </PopoverTrigger>
@@ -250,10 +250,10 @@ function CitationBadge({
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="flex flex-col gap-1.5">
-            <p className="text-xs font-medium text-muted-foreground">
+            <p className="font-mono text-xs font-medium text-muted-foreground">
               {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "N/A"}
             </p>
-            <p className="text-sm whitespace-pre-wrap">{entry.message}</p>
+            <p className="font-mono text-xs whitespace-pre-wrap">{entry.message}</p>
           </div>
         )}
       </PopoverContent>
