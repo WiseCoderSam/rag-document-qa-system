@@ -1,8 +1,10 @@
 # Product Requirements Document
 # Enterprise Log Monitoring & Threat Detection Platform
 
+> Status: this document mixes shipped features with the original stretch-goal plan. "Core Features" and "AI Pipeline" below reflect what's implemented; anything not implemented is listed explicitly under "Future Enhancements." See `tech.md` for the as-built stack.
+
 ## Goal
-A free, AI-powered SOC-style platform that ingests application, server and security logs, detects suspicious activity, and lets users investigate incidents using Retrieval-Augmented Generation (RAG).
+An AI-powered SOC-style platform that ingests application, server and security logs, detects suspicious activity, and lets users investigate incidents using Retrieval-Augmented Generation (RAG). AI features run against the Gemini API (cloud), not a local model — see "Future Enhancements" for a local-model option.
 
 ## Target Users
 - Students
@@ -12,8 +14,8 @@ A free, AI-powered SOC-style platform that ingests application, server and secur
 
 ## Core Features
 1. User authentication
-2. Upload log files (CSV, TXT, JSON, EVTX exported JSON)
-3. Real-time log ingestion
+2. Upload log files — line-delimited JSON, RFC3164 syslog, and free-form text/auth logs are parsed and field-extracted; CSV and EVTX-exported JSON are not yet supported (frontend currently accepts `.log`/`.txt`)
+3. Real-time log ingestion (local filesystem watcher, per-user watch folder)
 4. Rule-based threat detection
 5. RAG-powered investigation chat
 6. AI incident summaries
@@ -29,61 +31,50 @@ Logs
 -> Parsing
 -> Normalization
 -> Chunking
--> Embeddings (BAAI/bge-small-en-v1.5)
--> FAISS Index
+-> Embeddings (Gemini `gemini-embedding-001`)
+-> FAISS Index (single-instance, in-process)
 -> Retrieval
--> Ollama (Llama 3.1/Qwen)
+-> Gemini (`gemini-2.5-flash`)
 -> Source-backed answer
 
-## Detection Rules
+## Detection Rules (implemented)
 - Brute force login
-- Impossible travel
+- SQL/XSS injection signatures
 - Privilege escalation
-- Port scanning
-- Multiple failed logins
 - Suspicious PowerShell
-- Malware indicators
-- Credential dumping
-- Ransomware patterns
+- Credential dumping keyword matches
 
 ## Non-functional Requirements
-- Query <3 seconds
-- Role-based access
-- Docker support
-- Horizontal-ready architecture
+- Docker support (Dockerfiles + docker-compose provided)
+- Role-based access: not implemented — auth currently distinguishes authenticated vs. unauthenticated, not roles/permissions within an account
+- Query <3 seconds: not measured/enforced
+- Horizontal-ready architecture: not met — FAISS index and SQLite are both single-process/single-file (see tech.md "Known Limitations" in README.md)
 
 ## Tech Stack
 See tech.md
 
-## Free Services
-- Next.js
-- FastAPI
-- Supabase Free
-- Upstash Redis Free
-- Ollama
-- FAISS
+## Resume Highlights (accurate as of current implementation)
+- Full-stack architecture (FastAPI + React/TypeScript)
+- AI + RAG (Gemini embeddings + chat, source-cited answers)
+- Vector search (FAISS)
+- Rule-based threat detection
+- Dashboard + incident timeline
+- JWT-based authentication (Supabase Auth)
 - Docker
-- Vercel
-- Render Free
-- Grafana OSS
-- Prometheus
-
-## Resume Highlights
-- Full-stack architecture
-- AI + RAG
-- Vector search
-- Threat detection
-- Dashboard
-- Authentication
-- Docker
-- CI/CD
-- Production-ready design
+- CI/CD (GitHub Actions: backend pytest + frontend lint/build/Vitest, on every push/PR)
+- Automated tests: backend (pytest) and frontend (Vitest + React Testing Library)
 
 ## Future Enhancements
+- Local-model AI pipeline (Ollama + Llama 3.1/Qwen + sentence-transformers) as an alternative to the Gemini API
+- Celery + Redis for real background job processing (replacing in-process BackgroundTasks)
+- Supabase Postgres + pgvector as the primary database and vector store (replacing SQLite + in-process FAISS) for horizontal scalability
+- Additional detection rules: impossible travel, port scanning, multiple failed logins across users (password spraying), malware indicators, ransomware patterns
 - Sigma rules
 - YARA integration
 - Suricata logs
 - Zeek logs
 - Multi-tenant organizations
+- Role-based access control
 - Email/Slack alerts
 - SIEM connectors
+- Grafana / Prometheus / Sentry monitoring

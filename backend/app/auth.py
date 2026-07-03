@@ -9,8 +9,7 @@ from pathlib import Path
 
 # Ensure environment variables are loaded (override any empty system variables)
 env_path = Path(__file__).resolve().parent.parent / ".env"
-loaded = load_dotenv(dotenv_path=env_path, override=True)
-print(f"DEBUG: load_dotenv from {env_path} returned: {loaded}")
+load_dotenv(dotenv_path=env_path, override=True)
 
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
@@ -50,8 +49,6 @@ def get_current_user(
         # Inspect token header to detect the signing algorithm
         unverified_header = jwt.get_unverified_header(token)
         alg = unverified_header.get("alg")
-        print(f"DEBUG: SUPABASE_URL: {SUPABASE_URL}")
-        print(f"DEBUG: alg: {alg}")
 
         if alg == "ES256":
             if not jwk_client:
@@ -69,7 +66,6 @@ def get_current_user(
             )
         elif alg == "HS256":
             # Fall back to symmetric verification for local tests
-            print(f"DEBUG: SUPABASE_JWT_SECRET length: {len(SUPABASE_JWT_SECRET)}")
             payload = jwt.decode(
                 token,
                 SUPABASE_JWT_SECRET,
@@ -82,7 +78,6 @@ def get_current_user(
                 detail=f"Unsupported token algorithm: {alg}",
             )
     except jwt.PyJWTError as e:
-        print(f"DEBUG: JWT decode failed with error: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid authentication token: {e}",

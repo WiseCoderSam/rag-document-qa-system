@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { apiFetch, type LogFileOut } from "@/lib/api"
+import { toast } from "@/components/ui/toast"
+import { apiFetch, deleteLogFile, retryLogFile, type LogFileOut } from "@/lib/api"
 
 interface LogUploadProps {
   session: Session
@@ -27,6 +28,10 @@ export function LogUpload({ session }: LogUploadProps) {
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Tracks which row currently has a delete/retry request in flight, so only
+  // that row's buttons disable rather than the whole list.
+  const [pendingId, setPendingId] = useState<number | null>(null)
 
   useEffect(() => {
     apiFetch<LogFileOut[]>("/api/v1/logs", session)
@@ -51,10 +56,49 @@ export function LogUpload({ session }: LogUploadProps) {
       setLogFiles((prev) => [logFile, ...prev])
       setSelectedFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
+      toast.add({ title: "Upload started", description: `${logFile.filename} is processing.`, type: "success" })
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed.")
+      const message = err instanceof Error ? err.message : "Upload failed."
+      setUploadError(message)
+      toast.add({ title: "Upload failed", description: message, type: "error" })
     } finally {
       setUploading(false)
+    }
+  }
+
+  const handleDelete = async (logFile: LogFileOut) => {
+    if (pendingId !== null) return
+    setPendingId(logFile.id)
+    try {
+      await deleteLogFile(logFile.id, session)
+      setLogFiles((prev) => prev.filter((f) => f.id !== logFile.id))
+      toast.add({ title: "Deleted", description: `${logFile.filename} was removed.`, type: "success" })
+    } catch (err) {
+      toast.add({
+        title: "Delete failed",
+        description: err instanceof Error ? err.message : "Could not delete this file.",
+        type: "error",
+      })
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  const handleRetry = async (logFile: LogFileOut) => {
+    if (pendingId !== null) return
+    setPendingId(logFile.id)
+    try {
+      const updated = await retryLogFile(logFile.id, session)
+      setLogFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
+      toast.add({ title: "Retrying", description: `${logFile.filename} is processing again.`, type: "success" })
+    } catch (err) {
+      toast.add({
+        title: "Retry failed",
+        description: err instanceof Error ? err.message : "Could not retry this file.",
+        type: "error",
+      })
+    } finally {
+      setPendingId(null)
     }
   }
 
@@ -90,6 +134,21 @@ export function LogUpload({ session }: LogUploadProps) {
 
       <Card>
         <CardHeader>
+          <CardTitle>Real-time Ingestion</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            Drop <code className="font-mono text-xs">.log</code> files into your watch folder on the
+            backend host and they'll be ingested automatically:
+          </p>
+          <p className="mt-2 rounded-md border border-border bg-muted/30 p-2 font-mono text-xs break-all">
+            backend/ingestion_watch/{session.user.id}/
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Your Log Files</CardTitle>
         </CardHeader>
         <CardContent>
@@ -117,6 +176,29 @@ export function LogUpload({ session }: LogUploadProps) {
                     <div className="font-mono text-xs text-muted-foreground">
                       {new Date(logFile.uploaded_at).toLocaleString()}
                     </div>
+                  </div>
+                  <div className="flex gap-2">
+                    {logFile.status === "failed" && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={pendingId === logFile.id}
+                        onClick={() => void handleRetry(logFile)}
+                      >
+                        {pendingId === logFile.id && <Loader2 className="size-3.5 animate-spin" />}
+                        Retry
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={pendingId === logFile.id}
+                      onClick={() => void handleDelete(logFile)}
+                    >
+                      Delete
+                    </Button>
                   </div>
                 </li>
               ))}

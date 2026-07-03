@@ -52,13 +52,26 @@ function buildIncidentExportRows(incidents: IncidentOut[]): Record<string, unkno
   }))
 }
 
+const RECENT_PAGE_SIZE = 10
+
 interface DashboardProps {
   session: Session
 }
 
 export function Dashboard({ session }: DashboardProps) {
+  // Full incident set (unpaginated) — needed for the "Total incidents" stat
+  // tile and the severity-breakdown chart below, both of which must reflect
+  // every incident rather than one page of them.
   const [incidents, setIncidents] = useState<IncidentOut[] | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  // Separately paginated "Recent Incidents" list (its own state/offset), so
+  // paging through it doesn't affect the totals/chart above.
+  const [recentIncidents, setRecentIncidents] = useState<IncidentOut[] | null>(null)
+  const [recentError, setRecentError] = useState<string | null>(null)
+  const [recentLoading, setRecentLoading] = useState(false)
+  const [recentOffset, setRecentOffset] = useState(0)
+
   const [expandedIncidentId, setExpandedIncidentId] = useState<number | null>(null)
 
   useEffect(() => {
@@ -77,6 +90,31 @@ export function Dashboard({ session }: DashboardProps) {
     }
   }, [session])
 
+  const loadRecent = async (offset: number) => {
+    setRecentLoading(true)
+    try {
+      const data = await apiFetch<IncidentOut[]>(
+        `/api/v1/incidents?limit=${RECENT_PAGE_SIZE}&offset=${offset}`,
+        session
+      )
+      setRecentIncidents(data)
+      setRecentOffset(offset)
+      setRecentError(null)
+    } catch (err) {
+      setRecentError(err instanceof Error ? err.message : "Failed to load incidents.")
+    } finally {
+      setRecentLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadRecent(0)
+    // Only re-run when the session changes — loadRecent is intentionally
+    // omitted since it's re-created every render but its identity isn't
+    // what should trigger a re-fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session])
+
   const severityCounts = useMemo(() => {
     const counts = new Map<SeverityLevel, number>(SEVERITY_LEVELS.map((level) => [level, 0]))
     for (const incident of incidents ?? []) {
@@ -88,7 +126,7 @@ export function Dashboard({ session }: DashboardProps) {
     return SEVERITY_LEVELS.map((level) => ({ severity: level, count: counts.get(level) ?? 0 }))
   }, [incidents])
 
-  const recentIncidents = useMemo(() => (incidents ?? []).slice(0, 10), [incidents])
+  const mayHaveMore = (recentIncidents?.length ?? 0) === RECENT_PAGE_SIZE
 
   return (
     <div className="flex flex-col gap-4">
@@ -172,7 +210,7 @@ export function Dashboard({ session }: DashboardProps) {
         <CardHeader>
           <CardTitle>Recent Incidents</CardTitle>
           <CardDescription>Most recently detected incidents, newest first.</CardDescription>
-          {recentIncidents.length > 0 && (
+          {recentIncidents && recentIncidents.length > 0 && (
             <CardAction>
               <div className="flex gap-2">
                 <Button
@@ -196,61 +234,86 @@ export function Dashboard({ session }: DashboardProps) {
           )}
         </CardHeader>
         <CardContent>
-          {incidents === null ? (
+          {recentError && <p className="mb-3 text-sm text-destructive">Failed to load incidents: {recentError}</p>}
+
+          {recentIncidents === null ? (
             <p className="text-sm text-muted-foreground">Loading…</p>
           ) : recentIncidents.length === 0 ? (
             <p className="text-sm text-muted-foreground">No incidents detected yet.</p>
           ) : (
-            <ul className="flex flex-col gap-3">
-              {recentIncidents.map((incident) => {
-                const severityLevel = incident.severity.toUpperCase()
-                const badgeClass = isSeverityLevel(severityLevel)
-                  ? SEVERITY_BADGE_CLASS[severityLevel]
-                  : "bg-muted text-muted-foreground"
+            <>
+              <ul className="flex flex-col gap-3">
+                {recentIncidents.map((incident) => {
+                  const severityLevel = incident.severity.toUpperCase()
+                  const badgeClass = isSeverityLevel(severityLevel)
+                    ? SEVERITY_BADGE_CLASS[severityLevel]
+                    : "bg-muted text-muted-foreground"
 
-                const isExpanded = expandedIncidentId === incident.id
+                  const isExpanded = expandedIncidentId === incident.id
 
-                return (
-                  <li key={incident.id} className="border-b border-border pb-3 last:border-b-0 last:pb-0">
-                    <button
-                      type="button"
-                      className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
-                      onClick={() => setExpandedIncidentId(isExpanded ? null : incident.id)}
-                      aria-expanded={isExpanded}
-                      aria-controls={`incident-details-${incident.id}`}
-                    >
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-medium">{incident.rule_name}</span>
-                          <Badge className={badgeClass + " font-mono"}>{incident.severity}</Badge>
+                  return (
+                    <li key={incident.id} className="border-b border-border pb-3 last:border-b-0 last:pb-0">
+                      <button
+                        type="button"
+                        className="flex w-full flex-wrap items-center justify-between gap-2 text-left"
+                        onClick={() => setExpandedIncidentId(isExpanded ? null : incident.id)}
+                        aria-expanded={isExpanded}
+                        aria-controls={`incident-details-${incident.id}`}
+                      >
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-medium">{incident.rule_name}</span>
+                            <Badge className={badgeClass + " font-mono"}>{incident.severity}</Badge>
+                          </div>
+                          <p className="font-mono text-xs text-muted-foreground">
+                            {incident.affected_ip && <>IP: {incident.affected_ip} </>}
+                            {incident.affected_user && <>User: {incident.affected_user} </>}
+                            {incident.mitre_technique && <>· MITRE {incident.mitre_technique}</>}
+                          </p>
                         </div>
-                        <p className="font-mono text-xs text-muted-foreground">
-                          {incident.affected_ip && <>IP: {incident.affected_ip} </>}
-                          {incident.affected_user && <>User: {incident.affected_user} </>}
-                          {incident.mitre_technique && <>· MITRE {incident.mitre_technique}</>}
-                        </p>
-                      </div>
-                      <span className="font-mono text-xs whitespace-nowrap text-muted-foreground">
-                        {new Date(incident.created_at).toLocaleString()}
-                      </span>
-                    </button>
-                    {isExpanded && (
-                      <div id={`incident-details-${incident.id}`} className="mt-3 rounded-md border border-border p-3">
-                        <IncidentSummarizer
-                          session={session}
-                          incident={incident}
-                          onSummaryUpdated={(summary) => {
-                            setIncidents((prev) =>
-                              (prev ?? []).map((i) => (i.id === incident.id ? { ...i, summary } : i))
-                            )
-                          }}
-                        />
-                      </div>
-                    )}
-                  </li>
-                )
-              })}
-            </ul>
+                        <span className="font-mono text-xs whitespace-nowrap text-muted-foreground">
+                          {new Date(incident.created_at).toLocaleString()}
+                        </span>
+                      </button>
+                      {isExpanded && (
+                        <div id={`incident-details-${incident.id}`} className="mt-3 rounded-md border border-border p-3">
+                          <IncidentSummarizer
+                            session={session}
+                            incident={incident}
+                            onSummaryUpdated={(summary) => {
+                              setRecentIncidents((prev) =>
+                                (prev ?? []).map((i) => (i.id === incident.id ? { ...i, summary } : i))
+                              )
+                            }}
+                          />
+                        </div>
+                      )}
+                    </li>
+                  )
+                })}
+              </ul>
+
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void loadRecent(Math.max(0, recentOffset - RECENT_PAGE_SIZE))}
+                  disabled={recentOffset === 0 || recentLoading}
+                >
+                  Previous
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void loadRecent(recentOffset + RECENT_PAGE_SIZE)}
+                  disabled={!mayHaveMore || recentLoading}
+                >
+                  Next
+                </Button>
+              </div>
+            </>
           )}
         </CardContent>
       </Card>

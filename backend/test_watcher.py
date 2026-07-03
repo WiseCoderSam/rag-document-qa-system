@@ -5,7 +5,9 @@ from app.database import SessionLocal
 from app.models import LogFile, LogEntry, Incident
 
 WATCH_DIR = Path(__file__).resolve().parent / "ingestion_watch"
-TEST_LOG_FILE = WATCH_DIR / "test_folder_watcher.log"
+TEST_USER_ID = "00000000-0000-0000-0000-000000000001"
+TEST_USER_DIR = WATCH_DIR / TEST_USER_ID
+TEST_LOG_FILE = TEST_USER_DIR / "test_folder_watcher.log"
 
 # Mock log contents: 6 failed logins (brute force trigger) and 1 SQL Injection
 MOCK_LOG_LINES = [
@@ -23,11 +25,13 @@ MOCK_LOG_LINES = [
 def verify_watcher():
     print("Starting Folder Watcher Integration Verification...")
     
-    # Ensure watch directory exists
-    WATCH_DIR.mkdir(exist_ok=True)
-    
+    # Ensure the per-user watch subdirectory exists (files dropped directly
+    # into WATCH_DIR, with no user subfolder, are now ignored by the watcher
+    # since there'd be no user to attribute them to — see app/watcher.py).
+    TEST_USER_DIR.mkdir(parents=True, exist_ok=True)
+
     # Write the mock log file (should trigger the watchdog event handler)
-    print(f"Dropping mock log file into watch directory: {TEST_LOG_FILE.name}")
+    print(f"Dropping mock log file into watch directory: {TEST_LOG_FILE.relative_to(WATCH_DIR)}")
     with open(TEST_LOG_FILE, "w", encoding="utf-8") as f:
         f.write("\n".join(MOCK_LOG_LINES) + "\n")
         
@@ -44,7 +48,7 @@ def verify_watcher():
             return False
             
         print(f"[OK] LogFile database record found: ID={log_file.id}, Status='{log_file.status}', Uploaded By='{log_file.uploaded_by}'")
-        assert log_file.uploaded_by == "system_watcher", f"Expected uploaded_by='system_watcher', got '{log_file.uploaded_by}'"
+        assert log_file.uploaded_by == TEST_USER_ID, f"Expected uploaded_by='{TEST_USER_ID}', got '{log_file.uploaded_by}'"
         assert log_file.status == "completed", f"Expected status='completed', got '{log_file.status}'"
         
         # 2. Check LogEntry records

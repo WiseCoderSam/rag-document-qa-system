@@ -39,8 +39,10 @@ from app.processor import process_log_file_task
 
 # ---------------------------------------------------------------------------
 # Test database — private in-memory sqlite, shared across a test's Session()
-# calls via StaticPool. main.py's own module-level create_all() still runs
-# against the real engine at import time; this is separate and unaffected.
+# calls via StaticPool. Schema is created directly against this engine below
+# (see Base.metadata.create_all(bind=_engine)) rather than relying on
+# app.main, which no longer creates tables itself (schema is Alembic-managed
+# — see app/main.py).
 # ---------------------------------------------------------------------------
 
 _engine = create_engine(

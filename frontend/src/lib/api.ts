@@ -31,6 +31,11 @@ export async function apiFetch<T>(path: string, session: Session, init?: Request
     throw new ApiError(res.status, `Request to ${path} failed with status ${res.status}`)
   }
 
+  // 204 No Content (e.g. DELETE endpoints) has no body to parse.
+  if (res.status === 204) {
+    return undefined as T
+  }
+
   return res.json() as Promise<T>
 }
 
@@ -123,6 +128,16 @@ export interface LogFileOut {
   uploaded_at: string
 }
 
+/** DELETE /api/v1/logs/{id} — restricted to files owned by the caller. */
+export function deleteLogFile(id: number, session: Session): Promise<void> {
+  return apiFetch<void>(`/api/v1/logs/${id}`, session, { method: "DELETE" })
+}
+
+/** POST /api/v1/logs/{id}/retry — only valid while status === "failed". */
+export function retryLogFile(id: number, session: Session): Promise<LogFileOut> {
+  return apiFetch<LogFileOut>(`/api/v1/logs/${id}/retry`, session, { method: "POST" })
+}
+
 /** Matches DocumentOut in backend/app/main.py. */
 export interface DocumentOut {
   id: number
@@ -132,6 +147,16 @@ export interface DocumentOut {
   status: string
   uploaded_by: string
   uploaded_at: string
+}
+
+/** DELETE /api/v1/documents/{id} — restricted to documents owned by the caller. */
+export function deleteDocument(id: number, session: Session): Promise<void> {
+  return apiFetch<void>(`/api/v1/documents/${id}`, session, { method: "DELETE" })
+}
+
+/** POST /api/v1/documents/{id}/retry — only valid while status === "failed". */
+export function retryDocument(id: number, session: Session): Promise<DocumentOut> {
+  return apiFetch<DocumentOut>(`/api/v1/documents/${id}/retry`, session, { method: "POST" })
 }
 
 /** Matches DocumentChunkOut in backend/app/main.py. */

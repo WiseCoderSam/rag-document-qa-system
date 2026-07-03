@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { apiFetch, type DocumentOut } from "@/lib/api"
+import { toast } from "@/components/ui/toast"
+import { apiFetch, deleteDocument, retryDocument, type DocumentOut } from "@/lib/api"
 
 interface DocumentsProps {
   session: Session
@@ -28,6 +29,10 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Tracks which row currently has a delete/retry request in flight, so only
+  // that row's buttons disable rather than the whole list.
+  const [pendingId, setPendingId] = useState<number | null>(null)
 
   useEffect(() => {
     apiFetch<DocumentOut[]>("/api/v1/documents", session)
@@ -52,10 +57,49 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
       setDocuments((prev) => [doc, ...prev])
       setSelectedFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
+      toast.add({ title: "Upload started", description: `${doc.filename} is processing.`, type: "success" })
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed.")
+      const message = err instanceof Error ? err.message : "Upload failed."
+      setUploadError(message)
+      toast.add({ title: "Upload failed", description: message, type: "error" })
     } finally {
       setUploading(false)
+    }
+  }
+
+  const handleDelete = async (document: DocumentOut) => {
+    if (pendingId !== null) return
+    setPendingId(document.id)
+    try {
+      await deleteDocument(document.id, session)
+      setDocuments((prev) => prev.filter((d) => d.id !== document.id))
+      toast.add({ title: "Deleted", description: `${document.filename} was removed.`, type: "success" })
+    } catch (err) {
+      toast.add({
+        title: "Delete failed",
+        description: err instanceof Error ? err.message : "Could not delete this document.",
+        type: "error",
+      })
+    } finally {
+      setPendingId(null)
+    }
+  }
+
+  const handleRetry = async (document: DocumentOut) => {
+    if (pendingId !== null) return
+    setPendingId(document.id)
+    try {
+      const updated = await retryDocument(document.id, session)
+      setDocuments((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
+      toast.add({ title: "Retrying", description: `${document.filename} is processing again.`, type: "success" })
+    } catch (err) {
+      toast.add({
+        title: "Retry failed",
+        description: err instanceof Error ? err.message : "Could not retry this document.",
+        type: "error",
+      })
+    } finally {
+      setPendingId(null)
     }
   }
 
@@ -120,11 +164,34 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
                       {new Date(doc.uploaded_at).toLocaleString()}
                     </div>
                   </div>
-                  {doc.status === "completed" && (
-                    <Button type="button" variant="outline" size="sm" onClick={() => onChatWithDocument(doc.id)}>
-                      Chat with this document
+                  <div className="flex gap-2">
+                    {doc.status === "completed" && (
+                      <Button type="button" variant="outline" size="sm" onClick={() => onChatWithDocument(doc.id)}>
+                        Chat with this document
+                      </Button>
+                    )}
+                    {doc.status === "failed" && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={pendingId === doc.id}
+                        onClick={() => void handleRetry(doc)}
+                      >
+                        {pendingId === doc.id && <Loader2 className="size-3.5 animate-spin" />}
+                        Retry
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="sm"
+                      disabled={pendingId === doc.id}
+                      onClick={() => void handleDelete(doc)}
+                    >
+                      Delete
                     </Button>
-                  )}
+                  </div>
                 </li>
               ))}
             </ul>

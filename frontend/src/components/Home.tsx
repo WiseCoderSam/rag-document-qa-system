@@ -3,6 +3,7 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Dashboard } from "@/components/Dashboard"
 import { Documents } from "@/components/Documents"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { IncidentTimeline } from "@/components/IncidentTimeline"
 import { InvestigationChat } from "@/components/InvestigationChat"
 import { LogSearch } from "@/components/LogSearch"
@@ -108,29 +109,34 @@ export function Home() {
         </nav>
 
         <main key={activeTab} className="panel-enter flex-1">
-          {activeTab === "dashboard" && session && <Dashboard session={session} />}
-          {activeTab === "logs" && session && <LogUpload session={session} />}
-          {activeTab === "search" && session && <LogSearch session={session} />}
-          {activeTab === "chat" && session && (
-            // key remounts (resets conversation state) whenever the scope
-            // changes, e.g. general chat -> a specific incident's chat.
-            <InvestigationChat
-              key={selectedIncidentId ?? chatDocumentId ?? "general"}
-              session={session}
-              incidentId={selectedIncidentId ?? undefined}
-              fileId={chatDocumentId ?? undefined}
-              onClearScope={() => {
-                setSelectedIncidentId(null)
-                setChatDocumentId(null)
-              }}
-            />
-          )}
-          {activeTab === "timeline" && session && (
-            <IncidentTimeline session={session} onLaunchChat={handleLaunchChatForIncident} />
-          )}
-          {activeTab === "documents" && session && (
-            <Documents session={session} onChatWithDocument={handleChatWithDocument} />
-          )}
+          {/* Keyed by activeTab (on the <main> above), so switching tabs away
+              and back remounts this boundary and clears any caught error —
+              a broken panel doesn't need a full page reload to recover. */}
+          <ErrorBoundary>
+            {activeTab === "dashboard" && session && <Dashboard session={session} />}
+            {activeTab === "logs" && session && <LogUpload session={session} />}
+            {activeTab === "search" && session && <LogSearch session={session} />}
+            {activeTab === "chat" && session && (
+              // key remounts (resets conversation state) whenever the scope
+              // changes, e.g. general chat -> a specific incident's chat.
+              <InvestigationChat
+                key={selectedIncidentId ?? chatDocumentId ?? "general"}
+                session={session}
+                incidentId={selectedIncidentId ?? undefined}
+                fileId={chatDocumentId ?? undefined}
+                onClearScope={() => {
+                  setSelectedIncidentId(null)
+                  setChatDocumentId(null)
+                }}
+              />
+            )}
+            {activeTab === "timeline" && session && (
+              <IncidentTimeline session={session} onLaunchChat={handleLaunchChatForIncident} />
+            )}
+            {activeTab === "documents" && session && (
+              <Documents session={session} onChatWithDocument={handleChatWithDocument} />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
     </div>

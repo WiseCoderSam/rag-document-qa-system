@@ -1,3 +1,4 @@
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -7,25 +8,30 @@ from dotenv import load_dotenv
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
 from .auth import CurrentUser, get_current_user
-from .database import SessionLocal, engine, get_db
+from .database import SessionLocal, get_db
 from .doc_processor import process_document_task
 from .processor import process_log_file_task
-from .supabase import upload_to_supabase
+from .supabase import delete_file, fetch_file_bytes, upload_to_supabase
 from .watcher import start_watcher, stop_watcher
 from . import ai, models, rag, summarizer, vector_store
 
-# Create database tables automatically
-try:
-    models.Base.metadata.create_all(bind=engine)
-    print("Database tables initialized successfully.")
-except Exception as e:
-    print(f"Error initializing database tables: {e}")
+# Schema is managed exclusively by Alembic migrations (run `alembic upgrade
+# head` before starting the app) — this used to also call
+# models.Base.metadata.create_all() here, but that only creates missing
+# tables and never alters existing ones, so it silently masked the fact that
+# the documents/document_chunks tables (see alembic/versions/0002_*) had no
+# migration for years. Two competing schema-management paths is a correctness
+# risk (see alembic/versions/0002_add_documents_and_document_chunks.py's
+# docstring); Alembic is now the only one.
 
 
 @asynccontextmanager
@@ -46,14 +52,33 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Configure CORS
+# Configure CORS. allow_origins=["*"] combined with allow_credentials=True is
+# invalid per the CORS spec (browsers reject credentialed wildcard
+# responses), so origins are an explicit allowlist instead — defaulting to
+# the local Vite dev server, overridable via a comma-separated
+# ALLOWED_ORIGINS env var for deployed frontends.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Adjust for production
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Rate limiting for endpoints that call the Gemini API or accept uploads —
+# unauthenticated per-IP limits (checked before the JWT dependency resolves),
+# just enough to stop a single client from exhausting the Gemini free-tier
+# quota or hammering the FAISS index/background-task pool.
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # ---------------------------------------------------------------------------
@@ -98,7 +123,9 @@ class LogFileOut(BaseModel):
 
 
 @app.post("/api/v1/logs/upload", response_model=LogFileOut, status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("20/minute")
 def upload_log_file(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(get_current_user),
@@ -136,6 +163,59 @@ def list_log_files(
     )
 
 
+def _owned_log_file_or_404(db: Session, current_user: CurrentUser, log_file_id: int) -> models.LogFile:
+    log_file = (
+        db.query(models.LogFile)
+        .filter(models.LogFile.id == log_file_id, models.LogFile.uploaded_by == current_user.id)
+        .first()
+    )
+    if not log_file:
+        raise HTTPException(status_code=404, detail=f"Log file {log_file_id} not found.")
+    return log_file
+
+
+@app.delete("/api/v1/logs/{log_file_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_log_file(
+    log_file_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Deletes a log file and its entries/incidents (cascade, see models.py),
+    plus its underlying stored file (delete_file — a Supabase Storage
+    object or a local_storage/ file). Any FAISS vectors already embedded
+    for this file are left in place, unlike the stored file — they become
+    unreachable dead weight rather than active stale data, since every
+    consumer (rag.py, the /query and /chat endpoints) resolves a vector
+    match's id against the LogEntry table and silently drops matches that
+    no longer exist there.
+    """
+    log_file = _owned_log_file_or_404(db, current_user, log_file_id)
+    delete_file(log_file.file_url)
+    db.delete(log_file)
+    db.commit()
+
+
+@app.post("/api/v1/logs/{log_file_id}/retry", response_model=LogFileOut)
+def retry_log_file(
+    log_file_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-runs ingestion for a log file stuck in status='failed'."""
+    log_file = _owned_log_file_or_404(db, current_user, log_file_id)
+    if log_file.status != "failed":
+        raise HTTPException(status_code=400, detail=f"Log file {log_file_id} is not in a failed state.")
+
+    log_file.status = "processing"
+    db.commit()
+    db.refresh(log_file)
+
+    background_tasks.add_task(process_log_file_task, log_file.id, SessionLocal())
+    return log_file
+
+
 # ---------------------------------------------------------------------------
 # Phase 4 — RAG Query
 # ---------------------------------------------------------------------------
@@ -150,7 +230,9 @@ class QueryResponse(BaseModel):
 
 
 @app.post("/api/v1/query", response_model=QueryResponse)
+@limiter.limit("10/minute")
 def query_logs(
+    request: Request,
     body: QueryRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -229,17 +311,29 @@ def _owned_incident_query(db: Session, current_user: CurrentUser):
     )
 
 
+INCIDENT_MAX_LIMIT = 100
+
+
 @app.get("/api/v1/incidents", response_model=list[IncidentOut])
 def list_incidents(
+    limit: int | None = None,
+    offset: int = 0,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Lists incidents from log files uploaded by the current user, most recent first."""
-    return (
-        _owned_incident_query(db, current_user)
-        .order_by(models.Incident.created_at.desc())
-        .all()
-    )
+    """
+    Lists incidents from log files uploaded by the current user, most recent
+    first. *limit*/*offset* are optional — omitting *limit* returns every
+    incident (unchanged behavior for existing callers like IncidentTimeline
+    and the Dashboard severity chart, both of which need the full set rather
+    than one page); pass *limit* to paginate (Dashboard's "Recent Incidents"
+    list does this).
+    """
+    query = _owned_incident_query(db, current_user).order_by(models.Incident.created_at.desc())
+    query = query.offset(max(0, offset))
+    if limit is not None:
+        query = query.limit(max(1, min(limit, INCIDENT_MAX_LIMIT)))
+    return query.all()
 
 
 @app.get("/api/v1/incidents/{incident_id}", response_model=IncidentOut)
@@ -300,7 +394,9 @@ NO_MATCH_ANSWER = (
 
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
+@limiter.limit("10/minute")
 def chat_with_logs(
+    request: Request,
     body: ChatRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -471,7 +567,9 @@ class DocumentChunkOut(BaseModel):
 
 
 @app.post("/api/v1/documents/upload", response_model=DocumentOut, status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("20/minute")
 async def upload_document(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: CurrentUser = Depends(get_current_user),
@@ -509,6 +607,52 @@ def list_documents(
         .order_by(models.Document.uploaded_at.desc())
         .all()
     )
+
+
+def _owned_document_or_404(db: Session, current_user: CurrentUser, document_id: int) -> models.Document:
+    document = (
+        db.query(models.Document)
+        .filter(models.Document.id == document_id, models.Document.uploaded_by == current_user.id)
+        .first()
+    )
+    if not document:
+        raise HTTPException(status_code=404, detail=f"Document {document_id} not found.")
+    return document
+
+
+@app.delete("/api/v1/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_document(
+    document_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Deletes a document, its chunks (cascade, see models.py), and its stored file — see delete_log_file's docstring re: stale FAISS vectors."""
+    document = _owned_document_or_404(db, current_user, document_id)
+    delete_file(document.file_url)
+    db.delete(document)
+    db.commit()
+
+
+@app.post("/api/v1/documents/{document_id}/retry", response_model=DocumentOut)
+def retry_document(
+    document_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-runs processing for a document stuck in status='failed'."""
+    document = _owned_document_or_404(db, current_user, document_id)
+    if document.status != "failed":
+        raise HTTPException(status_code=400, detail=f"Document {document_id} is not in a failed state.")
+
+    file_bytes = fetch_file_bytes(document.file_url)
+
+    document.status = "processing"
+    db.commit()
+    db.refresh(document)
+
+    background_tasks.add_task(process_document_task, document.id, file_bytes, SessionLocal())
+    return document
 
 
 @app.get("/api/v1/documents/chunks", response_model=list[DocumentChunkOut])

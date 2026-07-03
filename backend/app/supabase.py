@@ -1,6 +1,7 @@
 import os
 import uuid
 from pathlib import Path
+import httpx
 from fastapi import UploadFile
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -50,3 +51,42 @@ def upload_to_supabase(file: UploadFile) -> str:
     with open(local_path, "wb") as f:
         f.write(file_content)
     return str(local_path.resolve())
+
+
+def fetch_file_bytes(file_url: str) -> bytes:
+    """
+    Retrieves raw file bytes from either a Supabase Storage public URL or a
+    local filesystem path (the local_storage/ fallback) — the read-side
+    counterpart to upload_to_supabase(). Shared by log/document ingestion
+    (processor.py, doc_processor.py) and by the retry endpoints in main.py,
+    which all need to re-read a previously uploaded file's contents.
+    """
+    if file_url.startswith("http://") or file_url.startswith("https://"):
+        response = httpx.get(file_url, timeout=30)
+        response.raise_for_status()
+        return response.content
+
+    return Path(file_url).read_bytes()
+
+
+def delete_file(file_url: str) -> None:
+    """
+    Best-effort removal of a previously stored file — the delete-side
+    counterpart to upload_to_supabase(). Called by main.py's DELETE
+    endpoints before removing the LogFile/Document row, so a deleted row
+    doesn't leave its underlying file (a Supabase Storage object, or a
+    local_storage/ file when Supabase wasn't configured/available at
+    upload time) as permanent orphaned dead weight. Swallows failures
+    (e.g. object already gone) rather than raising, since a delete
+    request should still succeed even if cleanup can't confirm the file
+    was there.
+    """
+    try:
+        if file_url.startswith("http://") or file_url.startswith("https://"):
+            if supabase_client:
+                object_path = file_url.split(f"/{BUCKET_NAME}/", 1)[-1]
+                supabase_client.storage.from_(BUCKET_NAME).remove([object_path])
+        else:
+            Path(file_url).unlink(missing_ok=True)
+    except Exception as e:
+        print(f"Warning: failed to delete stored file at {file_url}: {e}")

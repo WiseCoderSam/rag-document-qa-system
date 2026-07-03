@@ -1,6 +1,6 @@
 import re
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Iterable, List
 
 from sqlalchemy.orm import Session
@@ -106,6 +106,141 @@ def detect_injection_attacks(entries: Iterable[models.LogEntry]) -> List[dict]:
     return findings
 
 
+# --- Privilege escalation ---------------------------------------------
+
+PRIVILEGE_ESCALATION_SIGNATURES = [
+    (re.compile(r"\bsudo\b", re.IGNORECASE), "sudo invocation"),
+    (re.compile(r"\brunas\b", re.IGNORECASE), "runas invocation"),
+    (re.compile(r"added to (the )?administrators? group", re.IGNORECASE), "user added to admin group"),
+    (re.compile(r"privilege escalation", re.IGNORECASE), "explicit privilege escalation mention"),
+]
+
+# Windows Security-log event IDs commonly associated with privilege changes:
+# 4672 = special privileges assigned to new logon, 4728/4732 = member added
+# to a security-enabled global/local group, 4756 = member added to a
+# security-enabled universal group.
+PRIVILEGE_ESCALATION_EVENT_IDS = {"4672", "4728", "4732", "4756"}
+
+
+def detect_privilege_escalation(entries: Iterable[models.LogEntry]) -> List[dict]:
+    """
+    Flags log entries indicating a privilege change: sudo/runas usage, a
+    user being added to an admin group, or a Windows privilege-related
+    event ID (see PRIVILEGE_ESCALATION_EVENT_IDS).
+    """
+    findings = []
+    for entry in entries:
+        message = entry.message or ""
+        matched_label = None
+
+        if entry.event_id and str(entry.event_id) in PRIVILEGE_ESCALATION_EVENT_IDS:
+            matched_label = f"Windows Event ID {entry.event_id}"
+        else:
+            for pattern, label in PRIVILEGE_ESCALATION_SIGNATURES:
+                if pattern.search(message):
+                    matched_label = label
+                    break
+
+        if matched_label:
+            findings.append({
+                "title": f"Possible privilege escalation ({matched_label})",
+                "rule_name": "Privilege escalation",
+                "severity": "HIGH",
+                "description": (
+                    f"Log entry matched privilege escalation signature \"{matched_label}\": {message[:300]}"
+                ),
+                "mitre_technique": "T1548",
+                "mitre_tactic": "Privilege Escalation",
+                "affected_user": entry.user_name,
+                "affected_ip": entry.ip_address,
+            })
+
+    return findings
+
+
+# --- Suspicious PowerShell ----------------------------------------------
+
+POWERSHELL_SIGNATURES = [
+    (re.compile(r"-enc(odedcommand)?\b", re.IGNORECASE), "encoded command flag"),
+    (re.compile(r"invoke-expression|\biex\(", re.IGNORECASE), "Invoke-Expression"),
+    (re.compile(r"downloadstring|downloadfile", re.IGNORECASE), "remote download cmdlet"),
+    (re.compile(r"-nop\b.*-w(indowstyle)?\s+hidden", re.IGNORECASE), "hidden window flags"),
+    (re.compile(r"frombase64string", re.IGNORECASE), "base64-decoded payload"),
+]
+
+
+def detect_suspicious_powershell(entries: Iterable[models.LogEntry]) -> List[dict]:
+    """
+    Flags PowerShell command lines using signatures commonly seen in
+    fileless-malware / living-off-the-land techniques (encoded commands,
+    Invoke-Expression, remote downloads, hidden windows, base64 payloads).
+    Requires "powershell" to appear in the message to avoid false positives
+    on unrelated log lines that happen to contain a matched keyword.
+    """
+    findings = []
+    for entry in entries:
+        message = entry.message or ""
+        if "powershell" not in message.lower():
+            continue
+
+        for pattern, label in POWERSHELL_SIGNATURES:
+            if pattern.search(message):
+                findings.append({
+                    "title": f"Suspicious PowerShell usage ({label})",
+                    "rule_name": "Suspicious PowerShell",
+                    "severity": "HIGH",
+                    "description": (
+                        f"Log entry matched suspicious PowerShell signature \"{label}\": {message[:300]}"
+                    ),
+                    "mitre_technique": "T1059.001",
+                    "mitre_tactic": "Execution",
+                    "affected_user": entry.user_name,
+                    "affected_ip": entry.ip_address,
+                })
+                break
+
+    return findings
+
+
+# --- Credential dumping ---------------------------------------------------
+
+CREDENTIAL_DUMPING_SIGNATURES = [
+    (re.compile(r"mimikatz", re.IGNORECASE), "mimikatz"),
+    (re.compile(r"sekurlsa", re.IGNORECASE), "sekurlsa module"),
+    (re.compile(r"lsass\.exe", re.IGNORECASE), "lsass.exe access"),
+    (re.compile(r"procdump.*lsass", re.IGNORECASE), "procdump against lsass"),
+    (re.compile(r"ntds\.dit", re.IGNORECASE), "ntds.dit extraction"),
+    (re.compile(r"reg(\.exe)?\s+save\s+hklm\\sam", re.IGNORECASE), "SAM hive dump"),
+]
+
+
+def detect_credential_dumping(entries: Iterable[models.LogEntry]) -> List[dict]:
+    """
+    Flags log entries matching known credential-dumping tooling/techniques
+    (mimikatz, LSASS access/dumping, NTDS.dit extraction, SAM hive dumps).
+    """
+    findings = []
+    for entry in entries:
+        message = entry.message or ""
+        for pattern, label in CREDENTIAL_DUMPING_SIGNATURES:
+            if pattern.search(message):
+                findings.append({
+                    "title": f"Possible credential dumping ({label})",
+                    "rule_name": "Credential dumping",
+                    "severity": "CRITICAL",
+                    "description": (
+                        f"Log entry matched credential dumping signature \"{label}\": {message[:300]}"
+                    ),
+                    "mitre_technique": "T1003",
+                    "mitre_tactic": "Credential Access",
+                    "affected_user": entry.user_name,
+                    "affected_ip": entry.ip_address,
+                })
+                break
+
+    return findings
+
+
 # --- Entry point -----------------------------------------------------------
 
 def run_detection_rules(db: Session, entries: List[models.LogEntry], log_file: models.LogFile) -> List[models.Incident]:
@@ -114,7 +249,13 @@ def run_detection_rules(db: Session, entries: List[models.LogEntry], log_file: m
     records and inserts an Incident for each match, linked to log_file.
     Returns the created Incident objects.
     """
-    findings = detect_brute_force(entries) + detect_injection_attacks(entries)
+    findings = (
+        detect_brute_force(entries)
+        + detect_injection_attacks(entries)
+        + detect_privilege_escalation(entries)
+        + detect_suspicious_powershell(entries)
+        + detect_credential_dumping(entries)
+    )
 
     incidents = [
         models.Incident(

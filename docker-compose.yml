@@ -11,11 +11,17 @@ services:
       - ./backend:/app
       - backend_storage:/app/storage
     environment:
-      - DATABASE_URL=sqlite:///./sql_app.db
+      # Previously hardcoded to sqlite regardless of the host's real
+      # DATABASE_URL, so "docker compose up" never actually exercised
+      # Postgres even when that's what's configured for local/prod use.
+      # Now it passes through the host env var, only falling back to
+      # SQLite when DATABASE_URL isn't set at all.
+      - DATABASE_URL=${DATABASE_URL:-sqlite:///./sql_app.db}
       - SUPABASE_URL=${SUPABASE_URL:-}
       - SUPABASE_KEY=${SUPABASE_KEY:-}
       - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET:-supersecretkeyfortestinglocalraglogmonitoring}
       - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000}
     restart: always
 
   frontend:

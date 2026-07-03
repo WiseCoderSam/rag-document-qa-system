@@ -231,7 +231,20 @@ export function LogSearch({ session }: LogSearchProps) {
                 </TableHeader>
                 <TableBody>
                   {results.map((entry) => (
-                    <TableRow key={entry.id} className="cursor-pointer" onClick={() => setSelectedEntry(entry)}>
+                    <TableRow
+                      key={entry.id}
+                      className="cursor-pointer outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`View details for log entry ${entry.id}`}
+                      onClick={() => setSelectedEntry(entry)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault()
+                          setSelectedEntry(entry)
+                        }
+                      }}
+                    >
                       <TableCell className="font-mono text-xs text-muted-foreground">
                         {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "N/A"}
                       </TableCell>

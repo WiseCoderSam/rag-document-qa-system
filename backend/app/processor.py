@@ -1,24 +1,9 @@
-from pathlib import Path
-
-import httpx
 from sqlalchemy.orm import Session
 
 from . import models, summarizer, vector_store
 from .parser import parse_log_line
 from .rules import run_detection_rules
-
-
-def _fetch_log_content(file_url: str) -> bytes:
-    """
-    Retrieves raw log file bytes from either a Supabase Storage public URL
-    or a local filesystem path (the local_storage/ fallback).
-    """
-    if file_url.startswith("http://") or file_url.startswith("https://"):
-        response = httpx.get(file_url, timeout=30)
-        response.raise_for_status()
-        return response.content
-
-    return Path(file_url).read_bytes()
+from .supabase import fetch_file_bytes
 
 
 def process_log_file_task(file_id: int, db: Session) -> None:
@@ -33,7 +18,7 @@ def process_log_file_task(file_id: int, db: Session) -> None:
         return
 
     try:
-        content = _fetch_log_content(log_file.file_url)
+        content = fetch_file_bytes(log_file.file_url)
         text = content.decode("utf-8", errors="replace")
 
         entries = []
