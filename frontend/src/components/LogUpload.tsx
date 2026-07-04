@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/components/ui/toast"
-import { apiFetch, deleteLogFile, retryLogFile, type LogFileOut } from "@/lib/api"
+import { apiFetch, deleteLogFile, isLocalBackend, retryLogFile, type LogFileOut } from "@/lib/api"
 
 interface LogUploadProps {
   session: Session
@@ -132,20 +132,29 @@ export function LogUpload({ session }: LogUploadProps) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Real-time Ingestion</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Drop <code className="font-mono text-xs">.log</code> files into your watch folder on the
-            backend host and they'll be ingested automatically:
-          </p>
-          <p className="mt-2 rounded-md border border-border bg-muted/30 p-2 font-mono text-xs break-all">
-            backend/ingestion_watch/{session.user.id}/
-          </p>
-        </CardContent>
-      </Card>
+      {/*
+        The watch-folder feature needs real filesystem access to wherever
+        the backend is running — useful when the backend is on your own
+        machine, meaningless once it's a remote container nobody can drop
+        files into. Only shown against a local backend (see ENABLE_WATCHER
+        in backend/app/main.py for the matching server-side gate).
+      */}
+      {isLocalBackend() && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Real-time Ingestion</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Drop <code className="font-mono text-xs">.log</code> files into your watch folder on the
+              backend host and they'll be ingested automatically:
+            </p>
+            <p className="mt-2 rounded-md border border-border bg-muted/30 p-2 font-mono text-xs break-all">
+              backend/ingestion_watch/{session.user.id}/
+            </p>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

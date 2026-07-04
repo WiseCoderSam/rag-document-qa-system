@@ -37,11 +37,20 @@ An AI-powered SOC-style platform that ingests application, server, and security 
 - Frontend: `npm run test` from `frontend/`.
 - Both run automatically in CI on every push/PR — see `.github/workflows/ci.yml`.
 
+## Deployment
+
+The frontend and backend deploy to different kinds of platforms, because they have different runtime needs — the frontend is static/stateless, the backend needs an always-on process (background log ingestion) and a real database.
+
+- **Frontend → [Vercel](https://vercel.com).** Import the repo, set the project root to `frontend/`, and set these environment variables: `VITE_API_URL` (your deployed backend's URL), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. Vercel auto-detects the Vite build; no extra config needed.
+- **Backend → [Render](https://render.com)** (or Railway/Fly.io — anywhere that runs a long-lived Docker container). This repo includes `render.yaml`: import it as a [Render Blueprint](https://dashboard.render.com/blueprints) and it provisions the service from `backend/Dockerfile` automatically. You still need to paste in the secrets yourself (`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_JWT_SECRET`, `GEMINI_API_KEY`, `ALLOWED_ORIGINS`) via the Render dashboard.
+- **Database → Supabase Postgres**, not the local SQLite fallback. Free hosting tiers (Render's included) don't guarantee persistent disk across redeploys/restarts, so a SQLite file would silently lose data — use your Supabase project's Postgres connection string (Project Settings → Database → Connection string → URI) as `DATABASE_URL` instead, and run `alembic upgrade head` against it once before first use.
+- **The watch-folder feature is disabled in production** (`ENABLE_WATCHER=false`, already set in `render.yaml`). It watches a folder on the backend's own filesystem for dropped `.log` files — useful when you're running the backend on your own machine, meaningless once it's a remote container nobody has shell access to. The UI hides the corresponding card automatically whenever `VITE_API_URL` isn't a loopback address.
+
 ## Current Architecture
 
 This section describes what's actually implemented, as opposed to the original stretch-goal plan in `tech.md`/`prd.md`.
 
-- **Database**: SQLAlchemy against `DATABASE_URL` (defaults to a local SQLite file). Supabase Postgres is not currently wired up as the app database — Supabase is only used for Auth and Storage.
+- **Database**: SQLAlchemy against `DATABASE_URL` (defaults to a local SQLite file for zero-setup local dev). In production this should point at Supabase Postgres instead — see "Deployment" above — Supabase is otherwise used for Auth and Storage.
 - **Background processing**: FastAPI `BackgroundTasks` (in-process), not a separate task queue. There is no Celery/Redis dependency.
 - **Vector search**: a single in-process FAISS `IndexFlatIP`, persisted to disk. This is a single-instance design — it does not support running multiple backend replicas against a shared index.
 - **AI**: Google Gemini (`gemini-embedding-001` for embeddings, `gemini-2.5-flash` for chat/summarization), not a locally-hosted model. This means AI features require an internet connection and a Gemini API key.

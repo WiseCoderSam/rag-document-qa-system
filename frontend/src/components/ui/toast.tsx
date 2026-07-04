@@ -25,7 +25,10 @@ function ToastList() {
       key={t.id}
       toast={t}
       className={cn(
-        "absolute top-0 left-0 z-50 w-full rounded-lg border border-border bg-popover bg-clip-padding p-3 text-popover-foreground shadow-lg transition-all duration-200",
+        // bottom-0 (not top-0): the viewport is anchored at the page's
+        // bottom edge with zero height, so toasts must extend upward from
+        // it — top-0 would render them below the visible page.
+        "absolute right-0 bottom-0 z-50 w-full rounded-lg border border-border bg-popover bg-clip-padding p-3 text-popover-foreground shadow-lg transition-all duration-200",
         "data-[starting-style]:translate-y-2 data-[starting-style]:opacity-0",
         "data-[ending-style]:opacity-0",
         "data-[expanded]:translate-y-[calc(var(--toast-offset-y)*-1)]",

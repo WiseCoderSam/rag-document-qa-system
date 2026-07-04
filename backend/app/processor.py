@@ -29,6 +29,13 @@ def process_log_file_task(file_id: int, db: Session) -> None:
             parsed["file_id"] = log_file.id
             entries.append(parsed)
 
+        # Reprocessing (the /retry endpoints) must be idempotent: the
+        # early commit below means a failure partway through can leave
+        # entries/incidents from this attempt persisted, so clear any
+        # rows from a previous attempt before inserting fresh ones.
+        db.query(models.Incident).filter(models.Incident.log_file_id == log_file.id).delete()
+        db.query(models.LogEntry).filter(models.LogEntry.file_id == log_file.id).delete()
+
         if entries:
             # return_defaults=True populates each dict's generated "id" back
             # after insert — without it every entry stays id=None below, so
@@ -42,6 +49,13 @@ def process_log_file_task(file_id: int, db: Session) -> None:
             entry_objects = [models.LogEntry(**e) for e in entries]
             incidents = run_detection_rules(db, entry_objects, log_file)
 
+            # Commit before the Gemini calls below. Summarization and
+            # embedding take minutes for a large file, and on SQLite an
+            # open write transaction here blocks every other writer —
+            # e.g. DELETE /api/v1/logs/{id} fails with "database is
+            # locked" for the whole duration.
+            db.commit()
+
             # AI incident summaries (prd.md feature #6). A summarization
             # failure for one incident must not fail the whole ingestion —
             # log it and leave that incident's summary null, same as the
@@ -52,6 +66,7 @@ def process_log_file_task(file_id: int, db: Session) -> None:
                     incident.summary = summarizer.summarize_incident(db, incident)
                 except Exception as e:
                     print(f"Failed to summarize incident ({incident.rule_name}) for file {log_file.id}: {e}")
+            db.commit()
 
             # Build / update the FAISS index for RAG queries. add_entries()
             # chunks internally (app.chunking), so this stays a handful of

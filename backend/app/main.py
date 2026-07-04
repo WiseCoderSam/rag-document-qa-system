@@ -38,11 +38,18 @@ from . import ai, models, rag, summarizer, vector_store
 async def lifespan(app: FastAPI):
     # Load persisted FAISS index (no-op if none exists yet)
     vector_store.load()
-    observer = start_watcher()
+
+    # The watch-folder feature needs real filesystem access to the backend
+    # host, which only makes sense in local dev — on a hosted deployment
+    # there's no one who can "drop a file into" the container's disk, so
+    # it's off by default in production and only enabled explicitly.
+    watcher_enabled = os.getenv("ENABLE_WATCHER", "true").lower() != "false"
+    observer = start_watcher() if watcher_enabled else None
     try:
         yield
     finally:
-        stop_watcher(observer)
+        if observer:
+            stop_watcher(observer)
 
 
 app = FastAPI(

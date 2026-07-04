@@ -2,6 +2,16 @@ import type { Session } from "@supabase/supabase-js"
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000"
 
+/**
+ * True when the API is a loopback address — used to hide features (like the
+ * watch-folder card in LogUpload) that only make sense when the backend is
+ * running on the same machine as whoever's looking at the page, not a
+ * deployed remote host nobody can drop files onto.
+ */
+export function isLocalBackend(): boolean {
+  return API_URL.includes("localhost") || API_URL.includes("127.0.0.1")
+}
+
 export class ApiError extends Error {
   status: number
 
@@ -28,7 +38,16 @@ export async function apiFetch<T>(path: string, session: Session, init?: Request
   })
 
   if (!res.ok) {
-    throw new ApiError(res.status, `Request to ${path} failed with status ${res.status}`)
+    let message = `Request to ${path} failed with status ${res.status}`
+    try {
+      const error = (await res.json()) as { detail?: string }
+      if (error.detail) {
+        message = error.detail
+      }
+    } catch {
+      // Response is not JSON, use the default message
+    }
+    throw new ApiError(res.status, message)
   }
 
   // 204 No Content (e.g. DELETE endpoints) has no body to parse.

@@ -1,0 +1,40 @@
+# Render Blueprint for the FastAPI backend. Import this repo at
+# https://dashboard.render.com/blueprints and Render provisions the service
+# below automatically. Secrets (marked sync: false) still need to be pasted
+# into the Render dashboard after import — they're deliberately not stored
+# here.
+#
+# The frontend is NOT deployed via this blueprint — it goes to Vercel
+# separately (see README.md "Deployment").
+services:
+  - type: web
+    name: log-threat-detection-api
+    runtime: docker
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      # Postgres connection string (e.g. from Supabase: Project Settings ->
+      # Database -> Connection string -> URI). Render's free tier has no
+      # persistent disk, so SQLite would lose all data on every redeploy.
+      - key: DATABASE_URL
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_STORAGE_BUCKET
+        value: logs
+      - key: GEMINI_API_KEY
+        sync: false
+      # Your deployed Vercel URL(s), comma-separated — see app/main.py's CORS setup.
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # The watch-folder feature needs filesystem access to this container,
+      # which nobody has once it's deployed — off by default here, on by
+      # default for local dev (see app/main.py's lifespan).
+      - key: ENABLE_WATCHER
+        value: "false"
