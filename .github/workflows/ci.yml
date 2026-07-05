@@ -24,7 +24,7 @@ jobs:
         run: pip install -r requirements-dev.txt
 
       - name: Run pytest
-        run: pytest test_rag.py -v
+        run: pytest test_parser_rules.py test_rag.py -v
 
   frontend:
     runs-on: ubuntu-latest

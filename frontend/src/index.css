@@ -5,11 +5,15 @@
 /*
  * "Night watch" console theme — dark-only by design (index.html pins
  * class="dark" so the shadcn-style dark: variants in the ui components stay
- * active). The palette is a deep indigo-slate field with an amber primary.
+ * active). The palette is a deep indigo-slate field plus one severity ramp:
  *
- * The four --sev-* variables survive from the retired log-monitoring UI;
- * today they only feed the decorative .severity-spectrum hairline strip on
- * the app shell and auth page.
+ *   steel (LOW/INFO) → signal amber (MEDIUM/WARNING) → ember (HIGH/ERROR)
+ *   → alarm red (CRITICAL)
+ *
+ * Every severity-colored element in the app (chart bars, badges, timeline
+ * nodes, the header hairline) draws from these four --sev-* variables so the
+ * two severity vocabularies (Incident: LOW/MEDIUM/HIGH/CRITICAL, LogEntry:
+ * INFO/WARNING/ERROR/CRITICAL) map onto one visual scale.
  */
 :root {
   --radius: 0.5rem;

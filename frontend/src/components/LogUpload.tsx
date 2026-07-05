@@ -7,11 +7,10 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { toast } from "@/components/ui/toast"
-import { apiFetch, deleteDocument, retryDocument, type DocumentOut } from "@/lib/api"
+import { apiFetch, deleteLogFile, isLocalBackend, retryLogFile, type LogFileOut } from "@/lib/api"
 
-interface DocumentsProps {
+interface LogUploadProps {
   session: Session
-  onChatWithDocument: (documentId: number) => void
 }
 
 function statusBadgeClass(status: string): string {
@@ -20,8 +19,8 @@ function statusBadgeClass(status: string): string {
   return "bg-muted text-muted-foreground"
 }
 
-export function Documents({ session, onChatWithDocument }: DocumentsProps) {
-  const [documents, setDocuments] = useState<DocumentOut[]>([])
+export function LogUpload({ session }: LogUploadProps) {
+  const [logFiles, setLogFiles] = useState<LogFileOut[]>([])
   const [loadingList, setLoadingList] = useState(true)
   const [listError, setListError] = useState<string | null>(null)
 
@@ -35,8 +34,8 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
   const [pendingId, setPendingId] = useState<number | null>(null)
 
   useEffect(() => {
-    apiFetch<DocumentOut[]>("/api/v1/documents", session)
-      .then(setDocuments)
+    apiFetch<LogFileOut[]>("/api/v1/logs", session)
+      .then(setLogFiles)
       .catch((err: Error) => setListError(err.message))
       .finally(() => setLoadingList(false))
   }, [session])
@@ -50,14 +49,14 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
       formData.append("file", selectedFile)
       // No Content-Type header here — the browser sets the multipart
       // boundary automatically when body is a FormData instance.
-      const doc = await apiFetch<DocumentOut>("/api/v1/documents/upload", session, {
+      const logFile = await apiFetch<LogFileOut>("/api/v1/logs/upload", session, {
         method: "POST",
         body: formData,
       })
-      setDocuments((prev) => [doc, ...prev])
+      setLogFiles((prev) => [logFile, ...prev])
       setSelectedFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
-      toast.add({ title: "Upload started", description: `${doc.filename} is processing.`, type: "success" })
+      toast.add({ title: "Upload started", description: `${logFile.filename} is processing.`, type: "success" })
     } catch (err) {
       const message = err instanceof Error ? err.message : "Upload failed."
       setUploadError(message)
@@ -67,17 +66,17 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
     }
   }
 
-  const handleDelete = async (document: DocumentOut) => {
+  const handleDelete = async (logFile: LogFileOut) => {
     if (pendingId !== null) return
-    setPendingId(document.id)
+    setPendingId(logFile.id)
     try {
-      await deleteDocument(document.id, session)
-      setDocuments((prev) => prev.filter((d) => d.id !== document.id))
-      toast.add({ title: "Deleted", description: `${document.filename} was removed.`, type: "success" })
+      await deleteLogFile(logFile.id, session)
+      setLogFiles((prev) => prev.filter((f) => f.id !== logFile.id))
+      toast.add({ title: "Deleted", description: `${logFile.filename} was removed.`, type: "success" })
     } catch (err) {
       toast.add({
         title: "Delete failed",
-        description: err instanceof Error ? err.message : "Could not delete this document.",
+        description: err instanceof Error ? err.message : "Could not delete this file.",
         type: "error",
       })
     } finally {
@@ -85,17 +84,17 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
     }
   }
 
-  const handleRetry = async (document: DocumentOut) => {
+  const handleRetry = async (logFile: LogFileOut) => {
     if (pendingId !== null) return
-    setPendingId(document.id)
+    setPendingId(logFile.id)
     try {
-      const updated = await retryDocument(document.id, session)
-      setDocuments((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
-      toast.add({ title: "Retrying", description: `${document.filename} is processing again.`, type: "success" })
+      const updated = await retryLogFile(logFile.id, session)
+      setLogFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
+      toast.add({ title: "Retrying", description: `${logFile.filename} is processing again.`, type: "success" })
     } catch (err) {
       toast.add({
         title: "Retry failed",
-        description: err instanceof Error ? err.message : "Could not retry this document.",
+        description: err instanceof Error ? err.message : "Could not retry this file.",
         type: "error",
       })
     } finally {
@@ -107,7 +106,7 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
     <div className="flex flex-col gap-4">
       <Card>
         <CardHeader>
-          <CardTitle>Upload a Document</CardTitle>
+          <CardTitle>Upload a Log File</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex flex-wrap items-center gap-3">
@@ -116,7 +115,7 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.txt"
+                accept=".log,.txt"
                 className="hidden"
                 onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
               />
@@ -133,9 +132,33 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
         </CardContent>
       </Card>
 
+      {/*
+        The watch-folder feature needs real filesystem access to wherever
+        the backend is running — useful when the backend is on your own
+        machine, meaningless once it's a remote container nobody can drop
+        files into. Only shown against a local backend (see ENABLE_WATCHER
+        in backend/app/main.py for the matching server-side gate).
+      */}
+      {isLocalBackend() && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Real-time Ingestion</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-sm text-muted-foreground">
+              Drop <code className="font-mono text-xs">.log</code> files into your watch folder on the
+              backend host and they'll be ingested automatically:
+            </p>
+            <p className="mt-2 rounded-md border border-border bg-muted/30 p-2 font-mono text-xs break-all">
+              backend/ingestion_watch/{session.user.id}/
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader>
-          <CardTitle>Your Documents</CardTitle>
+          <CardTitle>Your Log Files</CardTitle>
         </CardHeader>
         <CardContent>
           {loadingList ? (
@@ -144,41 +167,35 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
               Loading…
             </div>
           ) : listError ? (
-            <p className="text-sm text-destructive">Failed to load documents: {listError}</p>
-          ) : documents.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No documents uploaded yet.</p>
+            <p className="text-sm text-destructive">Failed to load log files: {listError}</p>
+          ) : logFiles.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No log files uploaded yet.</p>
           ) : (
             <ul className="flex flex-col gap-3">
-              {documents.map((doc) => (
+              {logFiles.map((logFile) => (
                 <li
-                  key={doc.id}
+                  key={logFile.id}
                   className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border p-3"
                 >
                   <div className="flex flex-col gap-1">
                     <div className="flex items-center gap-2">
-                      <span className="font-mono text-sm font-medium">{doc.filename}</span>
-                      <Badge className={statusBadgeClass(doc.status) + " font-mono"}>{doc.status}</Badge>
+                      <span className="font-mono text-sm font-medium">{logFile.filename}</span>
+                      <Badge className={statusBadgeClass(logFile.status) + " font-mono"}>{logFile.status}</Badge>
                     </div>
                     <div className="font-mono text-xs text-muted-foreground">
-                      {doc.page_count !== null && <span>{doc.page_count} pages · </span>}
-                      {new Date(doc.uploaded_at).toLocaleString()}
+                      {new Date(logFile.uploaded_at).toLocaleString()}
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    {doc.status === "completed" && (
-                      <Button type="button" variant="outline" size="sm" onClick={() => onChatWithDocument(doc.id)}>
-                        Chat with this document
-                      </Button>
-                    )}
-                    {doc.status === "failed" && (
+                    {logFile.status === "failed" && (
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={pendingId === doc.id}
-                        onClick={() => void handleRetry(doc)}
+                        disabled={pendingId === logFile.id}
+                        onClick={() => void handleRetry(logFile)}
                       >
-                        {pendingId === doc.id && <Loader2 className="size-3.5 animate-spin" />}
+                        {pendingId === logFile.id && <Loader2 className="size-3.5 animate-spin" />}
                         Retry
                       </Button>
                     )}
@@ -186,8 +203,8 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
                       type="button"
                       variant="destructive"
                       size="sm"
-                      disabled={pendingId === doc.id}
-                      onClick={() => void handleDelete(doc)}
+                      disabled={pendingId === logFile.id}
+                      onClick={() => void handleDelete(logFile)}
                     >
                       Delete
                     </Button>

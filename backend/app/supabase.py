@@ -57,9 +57,9 @@ def fetch_file_bytes(file_url: str) -> bytes:
     """
     Retrieves raw file bytes from either a Supabase Storage public URL or a
     local filesystem path (the local_storage/ fallback) — the read-side
-    counterpart to upload_to_supabase(). Used by the document retry
-    endpoint in main.py, which needs to re-read a previously uploaded
-    file's contents.
+    counterpart to upload_to_supabase(). Shared by log/document ingestion
+    (processor.py, doc_processor.py) and by the retry endpoints in main.py,
+    which all need to re-read a previously uploaded file's contents.
     """
     if file_url.startswith("http://") or file_url.startswith("https://"):
         response = httpx.get(file_url, timeout=30)
@@ -73,7 +73,7 @@ def delete_file(file_url: str) -> None:
     """
     Best-effort removal of a previously stored file — the delete-side
     counterpart to upload_to_supabase(). Called by main.py's DELETE
-    endpoint before removing the Document row, so a deleted row
+    endpoints before removing the LogFile/Document row, so a deleted row
     doesn't leave its underlying file (a Supabase Storage object, or a
     local_storage/ file when Supabase wasn't configured/available at
     upload time) as permanent orphaned dead weight. Swallows failures

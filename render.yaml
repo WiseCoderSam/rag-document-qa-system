@@ -33,3 +33,8 @@ services:
       # Your deployed Vercel URL(s), comma-separated — see app/main.py's CORS setup.
       - key: ALLOWED_ORIGINS
         sync: false
+      # The watch-folder feature needs filesystem access to this container,
+      # which nobody has once it's deployed — off by default here, on by
+      # default for local dev (see app/main.py's lifespan).
+      - key: ENABLE_WATCHER
+        value: "false"

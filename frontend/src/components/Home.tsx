@@ -1,36 +1,57 @@
 import { useEffect, useState } from "react"
 
 import { Button } from "@/components/ui/button"
+import { Dashboard } from "@/components/Dashboard"
 import { Documents } from "@/components/Documents"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { IncidentTimeline } from "@/components/IncidentTimeline"
 import { InvestigationChat } from "@/components/InvestigationChat"
+import { LogSearch } from "@/components/LogSearch"
+import { LogUpload } from "@/components/LogUpload"
 import { useAuth } from "@/context/AuthContext"
-import { apiFetch, type DocumentOut } from "@/lib/api"
+import { apiFetch } from "@/lib/api"
 
 interface UserProfile {
   id: string
   email: string
 }
 
-type Tab = "documents" | "chat"
+// Shared tab shell for Tasks 5.2-5.4 (search / chat / timeline panels).
+// Kept generic on purpose: this file just switches over the active tab and
+// renders whichever panel is wired up, rather than encoding any
+// panel-specific logic here.
+type Tab = "dashboard" | "search" | "chat" | "timeline" | "documents" | "logs"
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "documents", label: "Documents" },
+  { id: "dashboard", label: "Dashboard" },
+  { id: "logs", label: "Upload Logs" },
+  { id: "search", label: "Search" },
   { id: "chat", label: "Chat" },
+  { id: "timeline", label: "Timeline" },
+  { id: "documents", label: "Documents" },
 ]
 
 export function Home() {
   const { session, signOut } = useAuth()
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<Tab>("documents")
-  // Set by Documents' "Chat with this document" button: scopes the chat tab
-  // to one document and switches to it. Kept here (not in InvestigationChat)
-  // so the scope survives tab switches.
-  const [chatDocument, setChatDocument] = useState<DocumentOut | null>(null)
+  const [activeTab, setActiveTab] = useState<Tab>("dashboard")
+  // Lifted state (Task 5.4): IncidentTimeline's "Launch RAG Investigation
+  // Chat" button sets this and switches to the chat tab, so
+  // InvestigationChat (Task 5.3) gets scoped to a specific incident without
+  // needing its own incident-fetch logic. Do not remove this when touching
+  // Task 5.3's code — it depends on this state existing here.
+  const [selectedIncidentId, setSelectedIncidentId] = useState<number | null>(null)
+  const [chatDocumentId, setChatDocumentId] = useState<number | null>(null)
 
-  const handleChatWithDocument = (document: DocumentOut) => {
-    setChatDocument(document)
+  const handleLaunchChatForIncident = (incidentId: number) => {
+    setSelectedIncidentId(incidentId)
+    setActiveTab("chat")
+  }
+
+  const handleChatWithDocument = (documentId: number) => {
+    setChatDocumentId(documentId)
+    setSelectedIncidentId(null)
     setActiveTab("chat")
   }
 
@@ -50,10 +71,10 @@ export function Home() {
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-col gap-1">
             <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
-              AI document assistant
+              Security operations console
             </p>
             <h1 className="font-display text-xl font-semibold tracking-tight">
-              Document Q&amp;A
+              Log Monitoring &amp; Threat Detection
             </h1>
             {profile && (
               <p className="font-mono text-xs text-muted-foreground">{profile.email}</p>
@@ -65,7 +86,7 @@ export function Home() {
           </Button>
         </header>
 
-        <nav className="flex gap-1 overflow-x-auto border-b border-border" aria-label="Sections">
+        <nav className="flex gap-1 overflow-x-auto border-b border-border" aria-label="Console sections">
           {TABS.map((tab) => {
             const isActive = activeTab === tab.id
             return (
@@ -87,30 +108,35 @@ export function Home() {
           })}
         </nav>
 
-        {/* Both panels stay mounted; the inactive one is hidden with CSS.
-            This preserves in-progress state — most importantly the chat
-            conversation, which used to be wiped by a tab switch. */}
-        <main className="flex-1">
-          <div className={activeTab === "documents" ? "panel-enter" : "hidden"}>
-            <ErrorBoundary>
-              {session && <Documents session={session} onChatWithDocument={handleChatWithDocument} />}
-            </ErrorBoundary>
-          </div>
-          <div className={activeTab === "chat" ? "panel-enter" : "hidden"}>
-            <ErrorBoundary>
-              {session && (
-                // key remounts (resets conversation state) whenever the scope
-                // changes, e.g. all-documents chat -> a specific document's chat.
-                <InvestigationChat
-                  key={chatDocument?.id ?? "general"}
-                  session={session}
-                  documentId={chatDocument?.id}
-                  documentName={chatDocument?.filename}
-                  onClearScope={() => setChatDocument(null)}
-                />
-              )}
-            </ErrorBoundary>
-          </div>
+        <main key={activeTab} className="panel-enter flex-1">
+          {/* Keyed by activeTab (on the <main> above), so switching tabs away
+              and back remounts this boundary and clears any caught error —
+              a broken panel doesn't need a full page reload to recover. */}
+          <ErrorBoundary>
+            {activeTab === "dashboard" && session && <Dashboard session={session} />}
+            {activeTab === "logs" && session && <LogUpload session={session} />}
+            {activeTab === "search" && session && <LogSearch session={session} />}
+            {activeTab === "chat" && session && (
+              // key remounts (resets conversation state) whenever the scope
+              // changes, e.g. general chat -> a specific incident's chat.
+              <InvestigationChat
+                key={selectedIncidentId ?? chatDocumentId ?? "general"}
+                session={session}
+                incidentId={selectedIncidentId ?? undefined}
+                fileId={chatDocumentId ?? undefined}
+                onClearScope={() => {
+                  setSelectedIncidentId(null)
+                  setChatDocumentId(null)
+                }}
+              />
+            )}
+            {activeTab === "timeline" && session && (
+              <IncidentTimeline session={session} onLaunchChat={handleLaunchChatForIncident} />
+            )}
+            {activeTab === "documents" && session && (
+              <Documents session={session} onChatWithDocument={handleChatWithDocument} />
+            )}
+          </ErrorBoundary>
         </main>
       </div>
     </div>

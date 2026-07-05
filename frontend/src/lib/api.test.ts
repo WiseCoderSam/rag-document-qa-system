@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest"
 import type { Session } from "@supabase/supabase-js"
 
-import { apiFetch, ApiError, getDocumentChunks } from "@/lib/api"
+import { apiFetch, ApiError, getDocumentChunks, getLogEntries } from "@/lib/api"
 
 const fakeSession = { access_token: "test-token" } as Session
 
@@ -43,6 +43,16 @@ describe("citation-id resolution helpers", () => {
     vi.unstubAllGlobals()
   })
 
+  it("getLogEntries skips the network call entirely for an empty id list", async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal("fetch", fetchMock)
+
+    const result = await getLogEntries([], fakeSession)
+
+    expect(result).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it("getDocumentChunks skips the network call entirely for an empty id list", async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal("fetch", fetchMock)
@@ -53,13 +63,13 @@ describe("citation-id resolution helpers", () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it("getDocumentChunks requests a comma-separated ids query param", async () => {
+  it("getLogEntries requests a comma-separated ids query param", async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] })
     vi.stubGlobal("fetch", fetchMock)
 
-    await getDocumentChunks([3, 1, 2], fakeSession)
+    await getLogEntries([3, 1, 2], fakeSession)
 
     const [url] = fetchMock.mock.calls[0]
-    expect(url).toContain("/api/v1/documents/chunks?ids=3,1,2")
+    expect(url).toContain("/api/v1/logs/entries?ids=3,1,2")
   })
 })

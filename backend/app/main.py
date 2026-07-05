@@ -19,8 +19,10 @@ from sqlalchemy.orm import Session
 from .auth import CurrentUser, get_current_user
 from .database import SessionLocal, get_db
 from .doc_processor import process_document_task
+from .processor import process_log_file_task
 from .supabase import delete_file, fetch_file_bytes, upload_to_supabase
-from . import ai, models, rag, vector_store
+from .watcher import start_watcher, stop_watcher
+from . import ai, models, rag, summarizer, vector_store
 
 # Schema is managed exclusively by Alembic migrations (run `alembic upgrade
 # head` before starting the app) — this used to also call
@@ -36,12 +38,23 @@ from . import ai, models, rag, vector_store
 async def lifespan(app: FastAPI):
     # Load persisted FAISS index (no-op if none exists yet)
     vector_store.load()
-    yield
+
+    # The watch-folder feature needs real filesystem access to the backend
+    # host, which only makes sense in local dev — on a hosted deployment
+    # there's no one who can "drop a file into" the container's disk, so
+    # it's off by default in production and only enabled explicitly.
+    watcher_enabled = os.getenv("ENABLE_WATCHER", "true").lower() != "false"
+    observer = start_watcher() if watcher_enabled else None
+    try:
+        yield
+    finally:
+        if observer:
+            stop_watcher(observer)
 
 
 app = FastAPI(
-    title="Document Q&A API",
-    description="API for uploading documents and asking questions about them via RAG",
+    title="Enterprise Log Monitoring & Threat Detection Platform API",
+    description="API for ingesting logs, detecting threats, and querying logs via RAG",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -83,13 +96,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 def health_check():
     return {
         "status": "healthy",
-        "service": "document-qa-api",
+        "service": "log-threat-detection-api",
     }
 
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to the Document Q&A API"}
+    return {"message": "Welcome to the Enterprise Log Monitoring & Threat Detection Platform API"}
 
 
 # ---------------------------------------------------------------------------
@@ -102,12 +115,278 @@ def read_current_user(current_user: CurrentUser = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
-# RAG Q&A Chat
+# Log upload
+# ---------------------------------------------------------------------------
+
+class LogFileOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    filename: str
+    file_url: str
+    status: str
+    uploaded_by: str
+    uploaded_at: datetime
+
+
+@app.post("/api/v1/logs/upload", response_model=LogFileOut, status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("20/minute")
+def upload_log_file(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    file_url = upload_to_supabase(file)
+
+    log_file = models.LogFile(
+        filename=file.filename,
+        file_url=file_url,
+        status="processing",
+        uploaded_by=current_user.id,
+    )
+    db.add(log_file)
+    db.commit()
+    db.refresh(log_file)
+
+    # Use a dedicated session for the background task since it outlives this request's db session.
+    background_tasks.add_task(process_log_file_task, log_file.id, SessionLocal())
+
+    return log_file
+
+
+@app.get("/api/v1/logs", response_model=list[LogFileOut])
+def list_log_files(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Lists log files uploaded by the current user, most recent first."""
+    return (
+        db.query(models.LogFile)
+        .filter(models.LogFile.uploaded_by == current_user.id)
+        .order_by(models.LogFile.uploaded_at.desc())
+        .all()
+    )
+
+
+def _owned_log_file_or_404(db: Session, current_user: CurrentUser, log_file_id: int) -> models.LogFile:
+    log_file = (
+        db.query(models.LogFile)
+        .filter(models.LogFile.id == log_file_id, models.LogFile.uploaded_by == current_user.id)
+        .first()
+    )
+    if not log_file:
+        raise HTTPException(status_code=404, detail=f"Log file {log_file_id} not found.")
+    return log_file
+
+
+@app.delete("/api/v1/logs/{log_file_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_log_file(
+    log_file_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Deletes a log file and its entries/incidents (cascade, see models.py),
+    plus its underlying stored file (delete_file — a Supabase Storage
+    object or a local_storage/ file). Any FAISS vectors already embedded
+    for this file are left in place, unlike the stored file — they become
+    unreachable dead weight rather than active stale data, since every
+    consumer (rag.py, the /query and /chat endpoints) resolves a vector
+    match's id against the LogEntry table and silently drops matches that
+    no longer exist there.
+    """
+    log_file = _owned_log_file_or_404(db, current_user, log_file_id)
+    delete_file(log_file.file_url)
+    db.delete(log_file)
+    db.commit()
+
+
+@app.post("/api/v1/logs/{log_file_id}/retry", response_model=LogFileOut)
+def retry_log_file(
+    log_file_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Re-runs ingestion for a log file stuck in status='failed'."""
+    log_file = _owned_log_file_or_404(db, current_user, log_file_id)
+    if log_file.status != "failed":
+        raise HTTPException(status_code=400, detail=f"Log file {log_file_id} is not in a failed state.")
+
+    log_file.status = "processing"
+    db.commit()
+    db.refresh(log_file)
+
+    background_tasks.add_task(process_log_file_task, log_file.id, SessionLocal())
+    return log_file
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 — RAG Query
+# ---------------------------------------------------------------------------
+
+class QueryRequest(BaseModel):
+    question: str
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    sources: list[int]
+
+
+@app.post("/api/v1/query", response_model=QueryResponse)
+@limiter.limit("10/minute")
+def query_logs(
+    request: Request,
+    body: QueryRequest,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Semantic search over ingested log entries using FAISS + Gemini RAG.
+    Returns an AI-generated answer grounded in the top-5 matching log lines,
+    together with the source LogEntry IDs used as context. Results are
+    restricted to the caller's own log entries (see vector_store.search).
+    kind="log" also keeps this log-only endpoint from surfacing DocumentChunk
+    matches now that the same index holds uploaded-document chunks too.
+    """
+    results = vector_store.search(body.question, current_user.id, k=5, kind="log")
+    source_ids = [r["id"] for r in results]
+
+    if not source_ids:
+        return QueryResponse(
+            answer=(
+                "No logs have been ingested yet. "
+                "Please upload a log file first."
+            ),
+            sources=[],
+        )
+
+    entries = (
+        db.query(models.LogEntry)
+        .filter(models.LogEntry.id.in_(source_ids))
+        .all()
+    )
+
+    # Sort the database entries to match the relevance order returned by the similarity search
+    entry_map = {e.id: e for e in entries}
+    ordered_entries = [entry_map[eid] for eid in source_ids if eid in entry_map]
+
+    answer = ai.answer_query(body.question, ordered_entries)
+    return QueryResponse(answer=answer, sources=source_ids)
+
+
+# ---------------------------------------------------------------------------
+# Incidents — listing & AI summaries (prd.md feature #6 — "AI incident
+# summaries"). Summaries are generated automatically at ingestion time in
+# processor.py via app.summarizer; resummarize_incident() below is the sole
+# on-demand path for (re)generating one, so there's a single summarization
+# implementation (app.summarizer.summarize_incident) instead of two.
+# ---------------------------------------------------------------------------
+
+class IncidentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    rule_name: str
+    severity: str
+    description: str
+    mitre_technique: str | None
+    mitre_tactic: str | None
+    status: str
+    summary: str | None
+    affected_user: str | None
+    affected_ip: str | None
+    log_file_id: int | None
+    created_at: datetime
+
+
+class IncidentSummaryResponse(BaseModel):
+    incident_id: int
+    summary: str
+
+
+def _owned_incident_query(db: Session, current_user: CurrentUser):
+    """Incidents joined to their LogFile, restricted to the caller's own files."""
+    return (
+        db.query(models.Incident)
+        .join(models.LogFile, models.Incident.log_file_id == models.LogFile.id)
+        .filter(models.LogFile.uploaded_by == current_user.id)
+    )
+
+
+INCIDENT_MAX_LIMIT = 100
+
+
+@app.get("/api/v1/incidents", response_model=list[IncidentOut])
+def list_incidents(
+    limit: int | None = None,
+    offset: int = 0,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Lists incidents from log files uploaded by the current user, most recent
+    first. *limit*/*offset* are optional — omitting *limit* returns every
+    incident (unchanged behavior for existing callers like IncidentTimeline
+    and the Dashboard severity chart, both of which need the full set rather
+    than one page); pass *limit* to paginate (Dashboard's "Recent Incidents"
+    list does this).
+    """
+    query = _owned_incident_query(db, current_user).order_by(models.Incident.created_at.desc())
+    query = query.offset(max(0, offset))
+    if limit is not None:
+        query = query.limit(max(1, min(limit, INCIDENT_MAX_LIMIT)))
+    return query.all()
+
+
+@app.get("/api/v1/incidents/{incident_id}", response_model=IncidentOut)
+def get_incident(
+    incident_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Fetches a single incident, provided it belongs to one of the caller's own log files."""
+    incident = _owned_incident_query(db, current_user).filter(models.Incident.id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
+    return incident
+
+
+@app.post("/api/v1/incidents/{incident_id}/resummarize", response_model=IncidentSummaryResponse)
+def resummarize_incident(
+    incident_id: int,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Regenerates an incident's AI summary on demand, using the same
+    incident-scoped context builder (entries matching affected_ip/
+    affected_user) that runs automatically at ingestion time in
+    processor.py.
+    """
+    incident = _owned_incident_query(db, current_user).filter(models.Incident.id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found.")
+
+    summary = summarizer.summarize_incident(db, incident)
+    incident.summary = summary
+    db.commit()
+
+    return IncidentSummaryResponse(incident_id=incident.id, summary=summary)
+
+
+# ---------------------------------------------------------------------------
+# RAG Investigation Chat
 # ---------------------------------------------------------------------------
 
 class ChatRequest(BaseModel):
     question: str
-    document_id: int | None = None
+    file_id: int | None = None
+    incident_id: int | None = None
 
 
 class ChatResponse(BaseModel):
@@ -116,34 +395,36 @@ class ChatResponse(BaseModel):
 
 
 NO_MATCH_ANSWER = (
-    "No matching document content found for this question. "
-    "Try rephrasing, or upload a document first if you haven't yet."
+    "No matching log data found for this question. "
+    "Try rephrasing, or upload a log file first if you haven't yet."
 )
 
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
 @limiter.limit("10/minute")
-def chat_with_documents(
+def chat_with_logs(
     request: Request,
     body: ChatRequest,
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    RAG-powered document Q&A. Retrieves the caller's own document chunks
-    most relevant to the question — optionally scoped to a specific
-    document — then asks Gemini to answer grounded in that context. Skips
-    the LLM call entirely when nothing matches, rather than prompting with
-    empty context.
+    RAG-powered investigation chat (prd.md: "RAG-powered investigation
+    chat", "Chat with previous incidents"). Retrieves the caller's own log
+    chunks most relevant to the question — optionally scoped to a specific
+    file or incident — then asks Gemini to answer grounded in that
+    context. Skips the LLM call entirely when nothing matches, rather than
+    prompting with empty context.
     """
     try:
         context, source_ids = rag.retrieve_context(
             db,
             question=body.question,
             user_id=current_user.id,
-            document_id=body.document_id,
+            file_id=body.file_id,
+            incident_id=body.incident_id,
         )
-    except rag.DocumentNotFoundError as e:
+    except rag.IncidentNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
     if not source_ids:
@@ -154,7 +435,121 @@ def chat_with_documents(
 
 
 # ---------------------------------------------------------------------------
-# Document Q&A — upload, library, and citation resolution
+# Log Search (prd.md feature #8 — "search by IP, user, hostname or event ID")
+# ---------------------------------------------------------------------------
+
+SEARCH_DEFAULT_LIMIT = 100
+SEARCH_MAX_LIMIT = 500
+
+
+class LogEntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    file_id: int
+    timestamp: datetime | None
+    severity: str
+    ip_address: str | None
+    user_name: str | None
+    hostname: str | None
+    event_id: str | None
+    message: str
+
+
+@app.get("/api/v1/logs/search", response_model=list[LogEntryOut])
+def search_logs(
+    ip: str | None = None,
+    user: str | None = None,
+    hostname: str | None = None,
+    event_id: str | None = None,
+    severity: str | None = None,
+    file_id: int | None = None,
+    limit: int = SEARCH_DEFAULT_LIMIT,
+    offset: int = 0,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Plain SQL-filtered log search (prd.md: "search by IP, user, hostname or
+    event ID") — distinct from the semantic /api/v1/query and /api/v1/chat
+    endpoints. Filters are ANDed together and results are restricted to
+    log files uploaded by the caller. At least one filter is required;
+    without one this would be an unbounded scan of the user's whole log
+    history rather than a search.
+    """
+    if not any([ip, user, hostname, event_id, severity, file_id]):
+        raise HTTPException(
+            status_code=400,
+            detail="At least one of ip, user, hostname, event_id, severity, or file_id is required.",
+        )
+
+    limit = max(1, min(limit, SEARCH_MAX_LIMIT))
+    offset = max(0, offset)
+
+    query = (
+        db.query(models.LogEntry)
+        .join(models.LogFile, models.LogEntry.file_id == models.LogFile.id)
+        .filter(models.LogFile.uploaded_by == current_user.id)
+    )
+
+    if ip:
+        query = query.filter(models.LogEntry.ip_address == ip)
+    if user:
+        query = query.filter(models.LogEntry.user_name == user)
+    if hostname:
+        query = query.filter(models.LogEntry.hostname == hostname)
+    if event_id:
+        query = query.filter(models.LogEntry.event_id == event_id)
+    if severity:
+        query = query.filter(models.LogEntry.severity == severity)
+    if file_id:
+        query = query.filter(models.LogEntry.file_id == file_id)
+
+    return (
+        query.order_by(models.LogEntry.timestamp.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+
+@app.get("/api/v1/logs/entries", response_model=list[LogEntryOut])
+def get_log_entries(
+    ids: str,
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Resolves a comma-separated list of LogEntry ids (e.g. ?ids=1,2,3) back
+    into full log content. This exists specifically to resolve the raw
+    `sources: number[]` ids returned by POST /api/v1/chat and
+    /api/v1/query into renderable citations — those endpoints don't
+    attach timestamp/message to each source id, and GET
+    /api/v1/logs/search can't be reused for this since it filters by
+    field value, not by an id list. Results are restricted to log files
+    uploaded by the caller; entries owned by another user, or nonexistent
+    ids, are silently omitted rather than erroring. The response order is
+    not guaranteed to match *ids* — callers should key results by id.
+    """
+    try:
+        id_list = [int(part) for part in ids.split(",") if part.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids must be a comma-separated list of integers.")
+
+    if not id_list:
+        return []
+
+    return (
+        db.query(models.LogEntry)
+        .join(models.LogFile, models.LogEntry.file_id == models.LogFile.id)
+        .filter(models.LogFile.uploaded_by == current_user.id)
+        .filter(models.LogEntry.id.in_(id_list))
+        .all()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Document Q&A — PDF upload, library, and citation resolution
 # ---------------------------------------------------------------------------
 
 class DocumentOut(BaseModel):
@@ -203,7 +598,6 @@ async def upload_document(
     db.commit()
     db.refresh(document)
 
-    # Use a dedicated session for the background task since it outlives this request's db session.
     background_tasks.add_task(process_document_task, document.id, file_bytes, SessionLocal())
 
     return document
@@ -239,15 +633,7 @@ def delete_document(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """
-    Deletes a document, its chunks (cascade, see models.py), and its stored
-    file (delete_file — a Supabase Storage object or a local_storage/ file).
-    Any FAISS vectors already embedded for this document are left in place,
-    unlike the stored file — they become unreachable dead weight rather than
-    active stale data, since every consumer (rag.py, the /chat endpoint)
-    resolves a vector match's id against the DocumentChunk table and
-    silently drops matches that no longer exist there.
-    """
+    """Deletes a document, its chunks (cascade, see models.py), and its stored file — see delete_log_file's docstring re: stale FAISS vectors."""
     document = _owned_document_or_404(db, current_user, document_id)
     delete_file(document.file_url)
     db.delete(document)
@@ -284,13 +670,9 @@ def get_document_chunks_by_ids(
 ):
     """
     Resolves a comma-separated list of DocumentChunk ids (e.g. ?ids=1,2,3)
-    back into full chunk text. This exists specifically to resolve the raw
-    `sources: number[]` ids returned by POST /api/v1/chat into renderable
-    citations — that endpoint doesn't attach text to each source id.
-    Results are restricted to documents uploaded by the caller; chunks
-    owned by another user, or nonexistent ids, are silently omitted rather
-    than erroring. The response order is not guaranteed to match *ids* —
-    callers should key results by id.
+    back into full chunk text. Document chunk ids share the same FAISS
+    index as LogEntry ids, so this is the document-mode counterpart to
+    GET /api/v1/logs/entries used to resolve /api/v1/chat citations.
     """
     try:
         id_list = [int(part) for part in ids.split(",") if part.strip()]
