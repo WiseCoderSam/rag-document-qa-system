@@ -1,27 +1,22 @@
 """
-Singleton FAISS vector store for log entry AND document chunk embeddings.
-Both share one flat index; every vector is tagged with a *kind* ("log" or
-"document") alongside user_id/file_id.
+Singleton FAISS vector store for document chunk embeddings.
 
-Each FAISS vector corresponds to a *chunk* (a window of log lines, or a
-slice of an uploaded document) produced by app.chunking / app.doc_processor,
-tagged with the owning user_id, file_id, and kind. IndexFlatIP has no native
-metadata filtering, so search() oversamples from the flat index and filters
-by user_id/file_id/kind in Python — this is what enforces per-user data
-isolation, since without it any authenticated user's query could retrieve
-any other user's log lines or documents.
+Each FAISS vector corresponds to a chunk (a slice of an uploaded document)
+produced by app.doc_processor, tagged with the owning user_id, file_id, and
+a *kind*. IndexFlatIP has no native metadata filtering, so search()
+oversamples from the flat index and filters by user_id/file_id/kind in
+Python — this is what enforces per-user data isolation, since without it
+any authenticated user's query could retrieve any other user's documents.
 
-`file_id` is only unique *within* a kind: LogFile.id and Document.id are
-independent autoincrement sequences in separate tables, so a LogFile and a
-Document can legitimately share the same numeric id. Callers that scope a
-search to a specific file MUST also pass `kind`, or two unrelated files
-(one a log, one a document) with the same id will bleed into each other's
-results.
+The *kind* tag ("document", historically also "log") survives from when
+this index also held log-entry vectors from the retired log-ingestion
+feature. A persisted index from an older install can still contain those
+vectors, so callers MUST keep filtering by kind="document" — see
+rag.retrieve_context.
 
 Public API
 ----------
 add_chunks(chunks, user_id, file_id, kind) — embed a list of chunk dicts and insert into the index
-add_entries(entries, user_id, file_id) — convenience: chunk then embed raw LogEntry objects (kind="log")
 search(query, user_id, k, file_id, kind) — embed query and return matching {"id", "kind"} dicts owned by user_id
 save() / load()     — persist index and metadata to disk
 _reset()            — test-only: clear all in-memory state
@@ -66,7 +61,7 @@ def _ensure_index():
 # Public API
 # ---------------------------------------------------------------------------
 
-def add_chunks(chunks: list[dict], user_id: str, file_id: int, kind: str = "log") -> None:
+def add_chunks(chunks: list[dict], user_id: str, file_id: int, kind: str = "document") -> None:
     """
     Embed each chunk's ``text`` (via ``ai.get_embeddings``) and add to the
     index, tagging every resulting vector with *user_id*, *file_id*, and
@@ -76,21 +71,17 @@ def add_chunks(chunks: list[dict], user_id: str, file_id: int, kind: str = "log"
     Parameters
     ----------
     chunks:
-        Output of ``app.chunking.chunk_entries`` (or the equivalent shape
-        from ``app.doc_processor``) — each dict has
-        ``{"text": str, "entry_ids": list[int]}``.
+        Chunk dicts from ``app.doc_processor`` — each has
+        ``{"text": str, "entry_ids": list[int]}`` where entry_ids are
+        DocumentChunk ids.
     user_id:
-        Owning user's id (``LogFile.uploaded_by`` / ``Document.uploaded_by``)
-        — required so a caller can never retrieve another user's data via
-        search().
+        Owning user's id (``Document.uploaded_by``) — required so a caller
+        can never retrieve another user's data via search().
     file_id:
-        The source row's id — ``LogFile.id`` when kind="log",
-        ``Document.id`` when kind="document". These are independent
-        autoincrement sequences in separate tables and can collide, which
-        is exactly why *kind* must be stored and filtered on too.
+        The source ``Document.id``.
     kind:
-        Either "log" (chunk['entry_ids'] are LogEntry ids) or "document"
-        (chunk['entry_ids'] are DocumentChunk ids).
+        "document" for all new vectors (see module docstring for the
+        legacy "log" kind).
     """
     if not chunks:
         return
@@ -124,16 +115,6 @@ def add_chunks(chunks: list[dict], user_id: str, file_id: int, kind: str = "log"
         _METADATA.extend(valid_meta)
 
     print(f"[vector_store] Added {len(valid_vecs)} {kind} chunk vectors for user={user_id} file={file_id} (total: {_ensure_index().ntotal})")
-
-
-def add_entries(entries: list, user_id: str, file_id: int) -> None:
-    """
-    Convenience wrapper: chunk *entries* then call add_chunks(), tagging the
-    resulting vectors with *user_id*, *file_id*, and kind="log".
-    Uses app.chunking defaults (CHUNK_SIZE=10, CHUNK_OVERLAP=2).
-    """
-    from .chunking import chunk_entries
-    add_chunks(chunk_entries(entries), user_id=user_id, file_id=file_id, kind="log")
 
 
 def search(

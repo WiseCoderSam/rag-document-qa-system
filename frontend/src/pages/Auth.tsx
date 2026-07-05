@@ -46,10 +46,10 @@ export function Auth() {
       <div className="flex flex-1 flex-col items-center justify-center gap-6 p-4">
         <div className="flex flex-col items-center gap-1 text-center">
           <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
-            Security operations console
+            AI document assistant
           </p>
           <h1 className="font-display text-2xl font-semibold tracking-tight">
-            Log Monitoring &amp; Threat Detection
+            Document Q&amp;A
           </h1>
         </div>
 
@@ -60,8 +60,8 @@ export function Auth() {
             </CardTitle>
             <CardDescription>
               {mode === "login"
-                ? "Sign in to investigate incidents and review logs."
-                : "Set up access to the log monitoring platform."}
+                ? "Sign in to upload documents and ask questions about them."
+                : "Set up access to the document Q&A assistant."}
             </CardDescription>
           </CardHeader>
           <form onSubmit={handleSubmit}>

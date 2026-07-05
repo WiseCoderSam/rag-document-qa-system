@@ -11,30 +11,11 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import {
   apiFetch,
   getDocumentChunks,
-  getLogEntries,
   NO_MATCH_ANSWER,
   type ChatRequest,
   type ChatResponse,
   type DocumentChunkOut,
-  type LogEntryOut,
 } from "@/lib/api"
-
-// DocumentChunkOut has no log-specific fields (timestamp, severity, etc.) —
-// this adapts one into the LogEntryOut shape CitationBadge already renders,
-// so document-mode citations don't need a second badge/popover component.
-function chunkToLogEntry(chunk: DocumentChunkOut): LogEntryOut {
-  return {
-    id: chunk.id,
-    message: chunk.text,
-    timestamp: null,
-    severity: "INFO",
-    ip_address: null,
-    user_name: null,
-    hostname: null,
-    event_id: null,
-    file_id: chunk.document_id,
-  }
-}
 
 interface ChatTurn {
   id: number
@@ -45,21 +26,21 @@ interface ChatTurn {
 
 interface InvestigationChatProps {
   session: Session
-  /** Scope the chat to one incident's log file. Both props are optional; pass at most one. */
-  incidentId?: number
-  /** Scope the chat to one uploaded file. Ignored if incidentId is also set. */
-  fileId?: number
+  /** Scope the chat to one uploaded document. */
+  documentId?: number
+  /** Human-readable name for the scoped document, shown in the header. */
+  documentName?: string
   onClearScope?: () => void
 }
 
 let turnCounter = 0
 
-export function InvestigationChat({ session, incidentId, fileId, onClearScope }: InvestigationChatProps) {
+export function InvestigationChat({ session, documentId, documentName, onClearScope }: InvestigationChatProps) {
   const [turns, setTurns] = useState<ChatTurn[]>([])
   const [question, setQuestion] = useState("")
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [entries, setEntries] = useState<Map<number, LogEntryOut>>(new Map())
+  const [chunks, setChunks] = useState<Map<number, DocumentChunkOut>>(new Map())
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -73,12 +54,8 @@ export function InvestigationChat({ session, incidentId, fileId, onClearScope }:
 
     try {
       const body: ChatRequest = { question: trimmed }
-      // Only send whichever scope this component actually has — both are optional
-      // on ChatRequest (backend/app/main.py:266-269).
-      if (incidentId !== undefined) {
-        body.incident_id = incidentId
-      } else if (fileId !== undefined) {
-        body.file_id = fileId
+      if (documentId !== undefined) {
+        body.document_id = documentId
       }
 
       const response = await apiFetch<ChatResponse>("/api/v1/chat", session, {
@@ -99,26 +76,10 @@ export function InvestigationChat({ session, incidentId, fileId, onClearScope }:
       ])
 
       if (response.sources.length > 0) {
-        let resolved: LogEntryOut[]
-        if (fileId !== undefined) {
-          // Document mode: sources are DocumentChunk ids, not LogEntry ids.
-          resolved = (await getDocumentChunks(response.sources, session)).map(chunkToLogEntry)
-        } else if (incidentId !== undefined) {
-          resolved = await getLogEntries(response.sources, session)
-        } else {
-          // General mode: the backend can now legitimately return a mix of
-          // log entry ids and document chunk ids in one response (see
-          // rag.py's kind-aware retrieve_context), so both must be
-          // resolved rather than trying one and falling back to the other.
-          const [logEntries, docChunks] = await Promise.all([
-            getLogEntries(response.sources, session),
-            getDocumentChunks(response.sources, session),
-          ])
-          resolved = [...logEntries, ...docChunks.map(chunkToLogEntry)]
-        }
-        setEntries((prev) => {
+        const resolved = await getDocumentChunks(response.sources, session)
+        setChunks((prev) => {
           const next = new Map(prev)
-          for (const entry of resolved) next.set(entry.id, entry)
+          for (const chunk of resolved) next.set(chunk.id, chunk)
           return next
         })
       }
@@ -134,13 +95,14 @@ export function InvestigationChat({ session, incidentId, fileId, onClearScope }:
       <CardHeader>
         <div className="flex items-center justify-between gap-4">
           <div>
-            <CardTitle>Investigation Chat</CardTitle>
+            <CardTitle>Ask Your Documents</CardTitle>
             <CardDescription>
-              Ask questions about your ingested logs
-              {incidentId !== undefined ? ` for Incident #${incidentId}` : fileId !== undefined ? ` for File #${fileId}` : ""}.
+              {documentId !== undefined
+                ? `Answers come only from ${documentName ?? "the selected document"}.`
+                : "Answers come from all documents you've uploaded."}
             </CardDescription>
           </div>
-          {(incidentId !== undefined || fileId !== undefined) && onClearScope && (
+          {documentId !== undefined && onClearScope && (
             <Button
               type="button"
               variant="outline"
@@ -148,7 +110,7 @@ export function InvestigationChat({ session, incidentId, fileId, onClearScope }:
               onClick={onClearScope}
               className="text-xs"
             >
-              Clear Scope
+              Ask all documents
             </Button>
           )}
         </div>
@@ -156,10 +118,14 @@ export function InvestigationChat({ session, incidentId, fileId, onClearScope }:
       <CardContent className="flex flex-1 flex-col gap-3 overflow-hidden">
         <div className="flex flex-1 flex-col gap-3 overflow-y-auto pr-1">
           {turns.length === 0 && !loading && (
-            <p className="text-sm text-muted-foreground">Ask a question to get started.</p>
+            <p className="text-sm text-muted-foreground">
+              Ask a question about your uploaded documents — e.g. &ldquo;What is this document
+              about?&rdquo; If you haven&apos;t uploaded anything yet, add a document in the
+              Documents tab first.
+            </p>
           )}
           {turns.map((turn) => (
-            <ChatBubble key={turn.id} turn={turn} entries={entries} />
+            <ChatBubble key={turn.id} turn={turn} chunks={chunks} />
           ))}
           {loading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status">
@@ -175,7 +141,7 @@ export function InvestigationChat({ session, incidentId, fileId, onClearScope }:
           <Input
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
-            placeholder="Ask about your logs…"
+            placeholder="Ask about your documents…"
             disabled={loading}
           />
           <Button type="submit" disabled={loading || !question.trim()} size="icon" aria-label="Send">
@@ -187,7 +153,7 @@ export function InvestigationChat({ session, incidentId, fileId, onClearScope }:
   )
 }
 
-function ChatBubble({ turn, entries }: { turn: ChatTurn; entries: Map<number, LogEntryOut> }) {
+function ChatBubble({ turn, chunks }: { turn: ChatTurn; chunks: Map<number, DocumentChunkOut> }) {
   if (turn.role === "notice") {
     return (
       <p className="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
@@ -210,9 +176,9 @@ function ChatBubble({ turn, entries }: { turn: ChatTurn; entries: Map<number, Lo
           turn.content
         ) : (
           // react-markdown does not render raw HTML by default (no rehype-raw
-          // plugin here), so a literal <script> tag quoted from an attacker's
-          // log payload (see rules.py's XSS signature detection) renders as
-          // inert text instead of executing — unlike dangerouslySetInnerHTML.
+          // plugin here), so a literal <script> tag quoted from an uploaded
+          // document renders as inert text instead of executing — unlike
+          // dangerouslySetInnerHTML.
           <div className="prose-sm max-w-none [&_ol]:my-1 [&_p]:my-1 [&_ul]:my-1">
             <Markdown>{turn.content}</Markdown>
           </div>
@@ -221,7 +187,7 @@ function ChatBubble({ turn, entries }: { turn: ChatTurn; entries: Map<number, Lo
       {turn.sources && turn.sources.length > 0 && (
         <div className="flex flex-wrap gap-1">
           {turn.sources.map((sourceId, index) => (
-            <CitationBadge key={sourceId} index={index + 1} entryId={sourceId} entry={entries.get(sourceId)} />
+            <CitationBadge key={sourceId} index={index + 1} chunk={chunks.get(sourceId)} />
           ))}
         </div>
       )}
@@ -229,31 +195,23 @@ function ChatBubble({ turn, entries }: { turn: ChatTurn; entries: Map<number, Lo
   )
 }
 
-function CitationBadge({
-  index,
-  entryId,
-  entry,
-}: {
-  index: number
-  entryId: number
-  entry: LogEntryOut | undefined
-}) {
+function CitationBadge({ index, chunk }: { index: number; chunk: DocumentChunkOut | undefined }) {
   return (
     <Popover>
       <PopoverTrigger className="cursor-pointer rounded-full">
         <Badge className="bg-secondary font-mono text-secondary-foreground hover:bg-secondary/80">
-          [{index}] Log Entry #{entryId}
+          Source [{index}]
         </Badge>
       </PopoverTrigger>
       <PopoverContent>
-        {!entry ? (
+        {!chunk ? (
           <p className="text-sm text-muted-foreground">Loading…</p>
         ) : (
           <div className="flex flex-col gap-1.5">
             <p className="font-mono text-xs font-medium text-muted-foreground">
-              {entry.timestamp ? new Date(entry.timestamp).toLocaleString() : "N/A"}
+              Excerpt #{chunk.chunk_index + 1} from document #{chunk.document_id}
             </p>
-            <p className="font-mono text-xs whitespace-pre-wrap">{entry.message}</p>
+            <p className="max-h-48 overflow-y-auto font-mono text-xs whitespace-pre-wrap">{chunk.text}</p>
           </div>
         )}
       </PopoverContent>

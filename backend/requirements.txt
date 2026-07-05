@@ -6,7 +6,6 @@ SQLAlchemy>=2.0.28
 alembic>=1.13.1
 PyJWT>=2.8.0
 psycopg2-binary>=2.9.9
-watchdog>=4.0.0
 faiss-cpu>=1.8.0
 python-multipart>=0.0.9
 numpy>=1.26.4

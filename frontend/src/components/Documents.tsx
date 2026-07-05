@@ -11,8 +11,12 @@ import { apiFetch, deleteDocument, retryDocument, type DocumentOut } from "@/lib
 
 interface DocumentsProps {
   session: Session
-  onChatWithDocument: (documentId: number) => void
+  onChatWithDocument: (document: DocumentOut) => void
 }
+
+// Matches the formats the backend can actually extract text from: PDF via
+// PyMuPDF plus the plain-text extensions in doc_processor.PLAINTEXT_EXTENSIONS.
+const ACCEPTED_FILE_TYPES = ".pdf,.txt,.md,.csv,.tsv,.json,.xml,.yaml,.yml,.ndjson"
 
 function statusBadgeClass(status: string): string {
   if (status === "completed") return "bg-ok/15 text-ok"
@@ -40,6 +44,21 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
       .catch((err: Error) => setListError(err.message))
       .finally(() => setLoadingList(false))
   }, [session])
+
+  // While any document is still processing, poll the list so its status
+  // flips to completed/failed without the user having to reload the page.
+  const hasProcessing = documents.some((doc) => doc.status === "processing")
+  useEffect(() => {
+    if (!hasProcessing) return
+    const intervalId = window.setInterval(() => {
+      apiFetch<DocumentOut[]>("/api/v1/documents", session)
+        .then(setDocuments)
+        .catch(() => {
+          // Keep showing the last good list; the next poll may succeed.
+        })
+    }, 5000)
+    return () => window.clearInterval(intervalId)
+  }, [hasProcessing, session])
 
   const handleUpload = async () => {
     if (!selectedFile || uploading) return
@@ -69,6 +88,7 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
 
   const handleDelete = async (document: DocumentOut) => {
     if (pendingId !== null) return
+    if (!window.confirm(`Delete ${document.filename}? This can't be undone.`)) return
     setPendingId(document.id)
     try {
       await deleteDocument(document.id, session)
@@ -116,13 +136,13 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".pdf,.txt"
+                accept={ACCEPTED_FILE_TYPES}
                 className="hidden"
                 onChange={(event) => setSelectedFile(event.target.files?.[0] ?? null)}
               />
             </Label>
             <span className="text-sm text-muted-foreground">
-              {selectedFile ? selectedFile.name : "No file selected."}
+              {selectedFile ? selectedFile.name : "PDF, text, or Markdown files."}
             </span>
             <Button type="button" onClick={() => void handleUpload()} disabled={uploading || !selectedFile}>
               {uploading && <Loader2 className="size-4 animate-spin" />}
@@ -146,7 +166,9 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
           ) : listError ? (
             <p className="text-sm text-destructive">Failed to load documents: {listError}</p>
           ) : documents.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No documents uploaded yet.</p>
+            <p className="text-sm text-muted-foreground">
+              No documents yet. Upload a PDF or text file above, then ask questions about it in the Chat tab.
+            </p>
           ) : (
             <ul className="flex flex-col gap-3">
               {documents.map((doc) => (
@@ -166,7 +188,7 @@ export function Documents({ session, onChatWithDocument }: DocumentsProps) {
                   </div>
                   <div className="flex gap-2">
                     {doc.status === "completed" && (
-                      <Button type="button" variant="outline" size="sm" onClick={() => onChatWithDocument(doc.id)}>
+                      <Button type="button" variant="outline" size="sm" onClick={() => onChatWithDocument(doc)}>
                         Chat with this document
                       </Button>
                     )}
