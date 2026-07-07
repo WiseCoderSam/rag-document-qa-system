@@ -15,8 +15,7 @@ An AI-powered SOC-style platform that ingests application, server and security l
 ## Core Features
 1. User authentication
 2. Upload log files — line-delimited JSON, RFC3164 syslog, and free-form text/auth logs are parsed and field-extracted; CSV and EVTX-exported JSON are not yet supported (frontend currently accepts `.log`/`.txt`)
-3. Real-time log ingestion (local filesystem watcher, per-user watch folder)
-4. Rule-based threat detection
+3. Rule-based threat detection
 5. RAG-powered investigation chat
 6. AI incident summaries
 7. MITRE ATT&CK technique mapping

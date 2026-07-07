@@ -23,7 +23,6 @@ from .database import SessionLocal, get_db
 from .doc_processor import process_document_task
 from .processor import process_log_file_task
 from .supabase import delete_file, fetch_file_bytes, upload_to_supabase
-from .watcher import start_watcher, stop_watcher
 from . import ai, models, rag, summarizer, vector_store
 
 # Schema is managed exclusively by Alembic migrations (run `alembic upgrade
@@ -40,18 +39,7 @@ from . import ai, models, rag, summarizer, vector_store
 async def lifespan(app: FastAPI):
     # Load persisted FAISS index (no-op if none exists yet)
     vector_store.load()
-
-    # The watch-folder feature needs real filesystem access to the backend
-    # host, which only makes sense in local dev — on a hosted deployment
-    # there's no one who can "drop a file into" the container's disk, so
-    # it's off by default in production and only enabled explicitly.
-    watcher_enabled = os.getenv("ENABLE_WATCHER", "true").lower() != "false"
-    observer = start_watcher() if watcher_enabled else None
-    try:
-        yield
-    finally:
-        if observer:
-            stop_watcher(observer)
+    yield
 
 
 app = FastAPI(

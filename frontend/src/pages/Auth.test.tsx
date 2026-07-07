@@ -88,9 +88,10 @@ describe("Auth", () => {
       expect(signUp).toHaveBeenCalledWith({
         email: "newuser@example.com",
         password: "brandnewpass",
+        options: { emailRedirectTo: window.location.origin },
       })
     )
     expect(signInWithPassword).not.toHaveBeenCalled()
-    expect(await screen.findByText(/check your inbox/i)).toBeInTheDocument()
+    expect(await screen.findByText(/we sent a confirmation link to/i)).toBeInTheDocument()
   })
 })

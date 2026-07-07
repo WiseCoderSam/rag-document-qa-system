@@ -28,7 +28,6 @@ This reflects what is actually implemented today. See "Future Enhancements" in `
 - Rule-based detection (`backend/app/rules.py`): regex/threshold rules over parsed log fields, not a local ML model
 
 ## Log Processing
-- `watchdog` (filesystem watcher for the local ingestion-drop folder)
 - PyMuPDF (`fitz`) for PDF text extraction
 - Python `logging` / stdout
 
@@ -46,7 +45,7 @@ This reflects what is actually implemented today. See "Future Enhancements" in `
 - None currently. Grafana/Prometheus/Sentry are aspirational — see prd.md.
 
 ## Features (implemented)
-- Log ingestion (upload + local filesystem watcher)
+- Log ingestion (file upload)
 - Rule-based threat detection (brute force, SQL/XSS injection signatures, privilege escalation, suspicious PowerShell, credential dumping)
 - AI incident summaries
 - RAG-powered investigation chat (scoped to a file, an incident, or unscoped)

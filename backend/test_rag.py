@@ -62,8 +62,7 @@ def _override_get_db():
 
 
 # Not using `with TestClient(app) as ...` on purpose: that would trigger the
-# real lifespan (folder watcher thread, FAISS index load from disk), which
-# none of these tests need and which would leak a background thread.
+# real lifespan (FAISS index load from disk), which none of these tests need.
 client = TestClient(app)
 
 

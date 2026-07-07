@@ -54,6 +54,21 @@ function MailIcon() {
   )
 }
 
+// Optional demo account (see backend/seed_demo.py and README "Demo mode"):
+// when both env vars are set, the auth page shows a one-click "Explore the
+// live demo" button that signs into this account. Exposing these in the
+// bundle is deliberate — the demo account is public by definition.
+const DEMO_EMAIL = import.meta.env.VITE_DEMO_EMAIL
+const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD
+
+const FEATURES = [
+  "Upload & parse logs — syslog, JSON, and free-form auth formats",
+  "Rule-based threat detection mapped to MITRE ATT&CK",
+  "AI incident summaries and RAG investigation chat (Gemini + FAISS)",
+  "Field search, severity dashboard, and incident timeline",
+  "Document Q&A over uploaded PDFs and runbooks",
+]
+
 export function Auth() {
   const { signIn, signUp, signInWithGoogle, resendConfirmation } = useAuth()
   const [mode, setMode] = useState<"login" | "signup">("login")
@@ -63,9 +78,25 @@ export function Auth() {
   const [info, setInfo] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [googleSubmitting, setGoogleSubmitting] = useState(false)
+  const [demoSubmitting, setDemoSubmitting] = useState(false)
+  const [demoError, setDemoError] = useState<string | null>(null)
   // When set, a confirmation email was just sent — show the "check your inbox" screen.
   const [pendingEmail, setPendingEmail] = useState<string | null>(null)
   const [resending, setResending] = useState(false)
+
+  const demoAvailable = Boolean(DEMO_EMAIL && DEMO_PASSWORD)
+
+  const handleDemo = async () => {
+    if (!DEMO_EMAIL || !DEMO_PASSWORD) return
+    setDemoError(null)
+    setDemoSubmitting(true)
+    const { error: authError } = await signIn(DEMO_EMAIL, DEMO_PASSWORD)
+    if (authError) {
+      setDemoError(authError)
+      setDemoSubmitting(false)
+    }
+    // On success the session updates and App switches to the console.
+  }
 
   const handleSubmit = async (event: FormEvent) => {
     event.preventDefault()
@@ -120,18 +151,58 @@ export function Auth() {
   return (
     <div className="flex min-h-svh flex-col">
       <div className="severity-spectrum h-0.5 shrink-0" aria-hidden="true" />
-      <div className="flex flex-1 flex-col items-center justify-center gap-6 p-4">
-        <div className="flex flex-col items-center gap-1 text-center">
-          <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
-            Security operations console
-          </p>
-          <h1 className="font-display text-2xl font-semibold tracking-tight">
-            Log Monitoring &amp; Threat Detection
-          </h1>
-        </div>
+      <div className="flex flex-1 items-center justify-center p-4 py-10">
+        <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[1fr_minmax(0,24rem)]">
+          <section className="flex flex-col gap-5">
+            <div className="flex flex-col gap-1">
+              <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
+                Security operations console
+              </p>
+              <h1 className="font-display text-3xl font-semibold tracking-tight">
+                Log Monitoring &amp; Threat Detection
+              </h1>
+            </div>
 
-        {pendingEmail ? (
-          <Card className="w-full max-w-sm">
+            <p className="max-w-prose text-sm leading-relaxed text-muted-foreground">
+              An AI-powered SOC console: ingest application and security logs,
+              surface threats with rule-based detection, and investigate
+              incidents through retrieval-augmented chat grounded in your own
+              log data.
+            </p>
+
+            <ul className="flex flex-col gap-2">
+              {FEATURES.map((feature) => (
+                <li key={feature} className="flex items-start gap-2.5 text-sm text-muted-foreground">
+                  <span
+                    className="mt-1.5 size-1.5 shrink-0 rounded-full bg-primary"
+                    aria-hidden="true"
+                  />
+                  {feature}
+                </li>
+              ))}
+            </ul>
+
+            {demoAvailable && (
+              <div className="flex max-w-md flex-col gap-2 rounded-lg border border-border bg-muted/20 p-4">
+                <p className="text-sm text-muted-foreground">
+                  Just browsing? Explore the console with pre-loaded incident
+                  data — one click, no sign-up.
+                </p>
+                <Button
+                  type="button"
+                  className="w-fit"
+                  onClick={() => void handleDemo()}
+                  disabled={demoSubmitting}
+                >
+                  {demoSubmitting ? "Opening demo..." : "Explore the live demo"}
+                </Button>
+                {demoError && <p className="text-sm text-destructive">{demoError}</p>}
+              </div>
+            )}
+          </section>
+
+          {pendingEmail ? (
+          <Card className="w-full max-w-sm justify-self-center">
             <CardHeader className="items-center text-center">
               <div className="mb-2 flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
                 <MailIcon />
@@ -175,7 +246,7 @@ export function Auth() {
             </CardFooter>
           </Card>
         ) : (
-          <Card className="w-full max-w-sm">
+          <Card className="w-full max-w-sm justify-self-center">
             <CardHeader>
               <CardTitle className="font-display text-xl">
                 {mode === "login" ? "Sign in" : "Create an account"}
@@ -253,7 +324,8 @@ export function Auth() {
               </button>
             </CardFooter>
           </Card>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )

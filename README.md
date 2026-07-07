@@ -39,12 +39,26 @@ An AI-powered SOC-style platform that ingests application, server, and security 
 
 ## Deployment
 
-The frontend and backend deploy to different kinds of platforms, because they have different runtime needs — the frontend is static/stateless, the backend needs an always-on process (background log ingestion) and a real database.
+The frontend and backend deploy to different kinds of platforms, because they have different runtime needs — the frontend is static/stateless, the backend needs an always-on process (in-process background jobs for log/document processing) and a real database.
 
 - **Frontend → [Vercel](https://vercel.com).** Import the repo, set the project root to `frontend/`, and set these environment variables: `VITE_API_URL` (your deployed backend's URL), `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`. Vercel auto-detects the Vite build; no extra config needed.
 - **Backend → [Render](https://render.com)** (or Railway/Fly.io — anywhere that runs a long-lived Docker container). This repo includes `render.yaml`: import it as a [Render Blueprint](https://dashboard.render.com/blueprints) and it provisions the service from `backend/Dockerfile` automatically. You still need to paste in the secrets yourself (`DATABASE_URL`, `SUPABASE_URL`, `SUPABASE_KEY`, `SUPABASE_JWT_SECRET`, `GEMINI_API_KEY`, `ALLOWED_ORIGINS`) via the Render dashboard.
 - **Database → Supabase Postgres**, not the local SQLite fallback. Free hosting tiers (Render's included) don't guarantee persistent disk across redeploys/restarts, so a SQLite file would silently lose data — use your Supabase project's Postgres connection string (Project Settings → Database → Connection string → URI) as `DATABASE_URL` instead, and run `alembic upgrade head` against it once before first use.
-- **The watch-folder feature is disabled in production** (`ENABLE_WATCHER=false`, already set in `render.yaml`). It watches a folder on the backend's own filesystem for dropped `.log` files — useful when you're running the backend on your own machine, meaningless once it's a remote container nobody has shell access to. The UI hides the corresponding card automatically whenever `VITE_API_URL` isn't a loopback address.
+
+## Demo mode
+
+The auth page can show a one-click **"Explore the live demo"** button so visitors (e.g. recruiters) can browse the console with pre-loaded incident data, without signing up. To enable it:
+
+1. **Create the demo account**: in the Supabase dashboard (Authentication → Users → Add user), create e.g. `demo@yourdomain.com` with a password, checking "Auto Confirm User" — or sign up through the app and confirm the email.
+2. **Seed it with sample data**: `backend/sample_data/` contains a crafted security log (a coherent brute-force → privilege-escalation → credential-dumping attack that triggers every detection rule) and an incident-response playbook for document Q&A. Upload them through the real API with:
+   ```
+   cd backend
+   python seed_demo.py --email demo@yourdomain.com --password <password> --api-url https://your-api.onrender.com
+   ```
+   (Omit `--api-url` to seed a locally running backend.) Re-running skips files that are already uploaded.
+3. **Show the button**: set `VITE_DEMO_EMAIL` and `VITE_DEMO_PASSWORD` in the frontend's environment (Vercel env vars, or `.env.local` locally). These are baked into the public bundle by design — the demo account is public. The button only renders when both are set.
+
+Note: the demo account is a normal account — visitors can delete the seeded files or upload their own. If that happens, just re-run the seed script.
 
 ## Current Architecture
 
