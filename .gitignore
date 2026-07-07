@@ -26,6 +26,8 @@ backend/vector_store/
 backend/local_storage/
 backend/storage/
 backend/*.db
+backend/*.db-shm
+backend/*.db-wal
 
 # IDE / System
 .vscode/

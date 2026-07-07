@@ -1,4 +1,5 @@
 import threading
+import uuid
 from pathlib import Path
 
 from watchdog.events import FileSystemEventHandler
@@ -41,6 +42,18 @@ class LogFileEventHandler(FileSystemEventHandler):
             return
 
         user_id = path.parent.name
+
+        # The folder name becomes LogFile.uploaded_by, which every read
+        # endpoint trusts as an owner id — require it to at least be a
+        # well-formed Supabase user UUID rather than arbitrary text.
+        try:
+            uuid.UUID(user_id)
+        except ValueError:
+            print(
+                f"[watcher] Ignoring {path} — parent folder {user_id!r} is not "
+                "a valid user UUID. Name the folder after your Supabase user id."
+            )
+            return
 
         # Process off the watchdog dispatch thread so we keep watching for new files.
         threading.Thread(target=_ingest_log_file, args=(path, user_id), daemon=True).start()

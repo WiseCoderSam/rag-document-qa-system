@@ -16,6 +16,17 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined)
 
+// GoTrue returns an empty body (message "{}") when it can't reach the SMTP
+// provider, so map blank/unparseable messages to something actionable.
+function normalizeAuthError(error: { message?: string } | null): string | null {
+  if (!error) return null
+  const message = error.message?.trim()
+  if (!message || message === "{}" || message === "[object Object]") {
+    return "The server couldn't send the email. Please try again in a few minutes."
+  }
+  return message
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null)
   const [loading, setLoading] = useState(true)
@@ -35,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn: AuthContextValue["signIn"] = async (email, password) => {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    return { error: error?.message ?? null }
+    return { error: normalizeAuthError(error) }
   }
 
   const signUp: AuthContextValue["signUp"] = async (email, password) => {
@@ -44,7 +55,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       password,
       options: { emailRedirectTo: window.location.origin },
     })
-    return { error: error?.message ?? null }
+    return { error: normalizeAuthError(error) }
   }
 
   const signInWithGoogle: AuthContextValue["signInWithGoogle"] = async () => {
@@ -52,7 +63,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       provider: "google",
       options: { redirectTo: window.location.origin },
     })
-    return { error: error?.message ?? null }
+    return { error: normalizeAuthError(error) }
   }
 
   const resendConfirmation: AuthContextValue["resendConfirmation"] = async (email) => {
@@ -61,7 +72,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       email,
       options: { emailRedirectTo: window.location.origin },
     })
-    return { error: error?.message ?? null }
+    return { error: normalizeAuthError(error) }
   }
 
   const signOut = async () => {

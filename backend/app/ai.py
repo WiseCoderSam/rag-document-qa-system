@@ -130,7 +130,10 @@ def generate_chat_response(prompt: str, context: str = "") -> str:
         )
         return response.text
     except Exception as e:
-        return f"Error communicating with Gemini API: {e}"
+        # Log the detail server-side only — raw provider errors can leak
+        # internal request metadata to end users.
+        print(f"[ai] Gemini chat call failed: {e}")
+        return "The AI service is temporarily unavailable. Please try again in a moment."
 
 
 # ---------------------------------------------------------------------------

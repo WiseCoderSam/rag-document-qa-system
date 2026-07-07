@@ -8,11 +8,13 @@ from dotenv import load_dotenv
 env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path, override=True)
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
@@ -59,11 +61,62 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Per-IP rate limiting on every endpoint (SlowAPIMiddleware applies
+# default_limits to any route without its own @limiter.limit decorator;
+# expensive Gemini/upload endpoints keep their stricter per-route limits).
+# Brute-force protection for authentication is separate: auth.py locks an IP
+# out for 15 minutes after 5 failed token validations.
+# Counters live in-process by default; point RATE_LIMIT_STORAGE_URI at a
+# shared store (e.g. redis://host:6379) if this ever runs multi-instance so
+# limits are enforced globally instead of per-worker.
+limiter = Limiter(
+    key_func=get_remote_address,
+    default_limits=["100/minute"],
+    storage_uri=os.getenv("RATE_LIMIT_STORAGE_URI", "memory://"),
+)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+# Reject oversized request bodies before they're read. Slightly above
+# MAX_UPLOAD_BYTES to leave room for multipart framing overhead.
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+_MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    # nosniff stops browsers MIME-guessing JSON/uploads into executable
+    # types; DENY blocks framing (clickjacking); the API never needs to
+    # send a Referer anywhere. HSTS is ignored over plain-HTTP localhost
+    # and kicks in automatically on the TLS-terminated deployment.
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+    return response
+
+
+@app.middleware("http")
+async def reject_oversized_requests(request: Request, call_next):
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            if int(content_length) > _MAX_REQUEST_BYTES:
+                return JSONResponse(status_code=413, content={"detail": "Request body too large."})
+        except ValueError:
+            return JSONResponse(status_code=400, content={"detail": "Invalid Content-Length header."})
+    return await call_next(request)
+
+
 # Configure CORS. allow_origins=["*"] combined with allow_credentials=True is
 # invalid per the CORS spec (browsers reject credentialed wildcard
 # responses), so origins are an explicit allowlist instead — defaulting to
 # the local Vite dev server, overridable via a comma-separated
 # ALLOWED_ORIGINS env var for deployed frontends.
+# Added after the rate-limit/size middleware so CORS runs outermost and 429/413
+# responses still carry CORS headers the browser will accept.
 _default_origins = "http://localhost:5173,http://127.0.0.1:5173"
 ALLOWED_ORIGINS = [
     origin.strip()
@@ -78,14 +131,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Rate limiting for endpoints that call the Gemini API or accept uploads —
-# unauthenticated per-IP limits (checked before the JWT dependency resolves),
-# just enough to stop a single client from exhausting the Gemini free-tier
-# quota or hammering the FAISS index/background-task pool.
-limiter = Limiter(key_func=get_remote_address)
-app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +160,37 @@ def read_current_user(current_user: CurrentUser = Depends(get_current_user)):
 
 
 # ---------------------------------------------------------------------------
+# Upload validation
+# ---------------------------------------------------------------------------
+
+LOG_UPLOAD_EXTENSIONS = {".log", ".txt", ".csv", ".tsv", ".json", ".ndjson"}
+DOCUMENT_UPLOAD_EXTENSIONS = {".pdf", ".txt", ".log", ".csv", ".tsv", ".json",
+                              ".xml", ".yaml", ".yml", ".md", ".ndjson"}
+
+
+def _validate_upload(file: UploadFile, allowed_extensions: set[str]) -> None:
+    """Rejects uploads with disallowed extensions or bodies over MAX_UPLOAD_BYTES."""
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type '{ext or 'none'}'. Allowed: {', '.join(sorted(allowed_extensions))}",
+        )
+
+    # Size of the spooled upload without loading it into memory.
+    file.file.seek(0, 2)
+    size = file.file.tell()
+    file.file.seek(0)
+    if size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit.",
+        )
+    if size == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+
+# ---------------------------------------------------------------------------
 # Log upload
 # ---------------------------------------------------------------------------
 
@@ -138,6 +214,7 @@ def upload_log_file(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _validate_upload(file, LOG_UPLOAD_EXTENSIONS)
     file_url = upload_to_supabase(file)
 
     log_file = models.LogFile(
@@ -228,7 +305,7 @@ def retry_log_file(
 # ---------------------------------------------------------------------------
 
 class QueryRequest(BaseModel):
-    question: str
+    question: str = Field(min_length=1, max_length=4000)
 
 
 class QueryResponse(BaseModel):
@@ -384,9 +461,9 @@ def resummarize_incident(
 # ---------------------------------------------------------------------------
 
 class ChatRequest(BaseModel):
-    question: str
-    file_id: int | None = None
-    incident_id: int | None = None
+    question: str = Field(min_length=1, max_length=4000)
+    file_id: int | None = Field(default=None, ge=1)
+    incident_id: int | None = Field(default=None, ge=1)
 
 
 class ChatResponse(BaseModel):
@@ -458,12 +535,12 @@ class LogEntryOut(BaseModel):
 
 @app.get("/api/v1/logs/search", response_model=list[LogEntryOut])
 def search_logs(
-    ip: str | None = None,
-    user: str | None = None,
-    hostname: str | None = None,
-    event_id: str | None = None,
-    severity: str | None = None,
-    file_id: int | None = None,
+    ip: str | None = Query(default=None, max_length=64),
+    user: str | None = Query(default=None, max_length=256),
+    hostname: str | None = Query(default=None, max_length=256),
+    event_id: str | None = Query(default=None, max_length=64),
+    severity: str | None = Query(default=None, max_length=32),
+    file_id: int | None = Query(default=None, ge=1),
     limit: int = SEARCH_DEFAULT_LIMIT,
     offset: int = 0,
     current_user: CurrentUser = Depends(get_current_user),
@@ -513,9 +590,23 @@ def search_logs(
     )
 
 
+MAX_IDS_PER_REQUEST = 200
+
+
+def _parse_ids_param(ids: str) -> list[int]:
+    """Parses a comma-separated id list, rejecting malformed or oversized input."""
+    try:
+        id_list = [int(part) for part in ids.split(",") if part.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="ids must be a comma-separated list of integers.")
+    if len(id_list) > MAX_IDS_PER_REQUEST:
+        raise HTTPException(status_code=400, detail=f"At most {MAX_IDS_PER_REQUEST} ids per request.")
+    return id_list
+
+
 @app.get("/api/v1/logs/entries", response_model=list[LogEntryOut])
 def get_log_entries(
-    ids: str,
+    ids: str = Query(max_length=2000),
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -531,11 +622,7 @@ def get_log_entries(
     ids, are silently omitted rather than erroring. The response order is
     not guaranteed to match *ids* — callers should key results by id.
     """
-    try:
-        id_list = [int(part) for part in ids.split(",") if part.strip()]
-    except ValueError:
-        raise HTTPException(status_code=400, detail="ids must be a comma-separated list of integers.")
-
+    id_list = _parse_ids_param(ids)
     if not id_list:
         return []
 
@@ -582,6 +669,7 @@ async def upload_document(
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    _validate_upload(file, DOCUMENT_UPLOAD_EXTENSIONS)
     # Read the bytes now — FastAPI closes the upload stream after this
     # request returns, so the background task can't read from `file` later.
     file_bytes = await file.read()
@@ -664,7 +752,7 @@ def retry_document(
 
 @app.get("/api/v1/documents/chunks", response_model=list[DocumentChunkOut])
 def get_document_chunks_by_ids(
-    ids: str,
+    ids: str = Query(max_length=2000),
     current_user: CurrentUser = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -674,11 +762,7 @@ def get_document_chunks_by_ids(
     index as LogEntry ids, so this is the document-mode counterpart to
     GET /api/v1/logs/entries used to resolve /api/v1/chat citations.
     """
-    try:
-        id_list = [int(part) for part in ids.split(",") if part.strip()]
-    except ValueError:
-        raise HTTPException(status_code=400, detail="ids must be a comma-separated list of integers.")
-
+    id_list = _parse_ids_param(ids)
     if not id_list:
         return []
 
