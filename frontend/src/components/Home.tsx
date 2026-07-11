@@ -6,6 +6,7 @@ import { Documents } from "@/components/Documents"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { IncidentTimeline } from "@/components/IncidentTimeline"
 import { InvestigationChat } from "@/components/InvestigationChat"
+import { Logo } from "@/components/Logo"
 import { LogSearch } from "@/components/LogSearch"
 import { LogUpload } from "@/components/LogUpload"
 import { useAuth } from "@/context/AuthContext"
@@ -70,12 +71,10 @@ export function Home() {
       <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col gap-5 px-4 pt-5 pb-6">
         <header className="flex flex-wrap items-end justify-between gap-3">
           <div className="flex flex-col gap-1">
-            <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
-              Security operations console
-            </p>
-            <h1 className="font-display text-xl font-semibold tracking-tight">
+            <Logo markClassName="size-7" />
+            <p className="font-mono text-[10px] tracking-[0.22em] text-muted-foreground uppercase">
               Log Monitoring &amp; Threat Detection
-            </h1>
+            </p>
             {profile && (
               <p className="font-mono text-xs text-muted-foreground">{profile.email}</p>
             )}

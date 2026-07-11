@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Logo } from "@/components/Logo"
 import { useAuth } from "@/context/AuthContext"
 
 function GoogleIcon() {
@@ -157,6 +158,7 @@ export function Auth() {
       <div className="flex flex-1 items-center justify-center p-4 py-10">
         <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[1fr_minmax(0,24rem)]">
           <section className="flex flex-col gap-5">
+            <Logo markClassName="size-8" />
             <div className="flex flex-col gap-1">
               <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
                 Security operations console
