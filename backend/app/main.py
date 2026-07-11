@@ -2,11 +2,6 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
-from dotenv import load_dotenv
-
-# Ensure environment variables are loaded (override any empty system variables)
-env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(dotenv_path=env_path, override=True)
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -289,61 +284,6 @@ def retry_log_file(
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 — RAG Query
-# ---------------------------------------------------------------------------
-
-class QueryRequest(BaseModel):
-    question: str = Field(min_length=1, max_length=4000)
-
-
-class QueryResponse(BaseModel):
-    answer: str
-    sources: list[int]
-
-
-@app.post("/api/v1/query", response_model=QueryResponse)
-@limiter.limit("10/minute")
-def query_logs(
-    request: Request,
-    body: QueryRequest,
-    current_user: CurrentUser = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """
-    Semantic search over ingested log entries using FAISS + Gemini RAG.
-    Returns an AI-generated answer grounded in the top-5 matching log lines,
-    together with the source LogEntry IDs used as context. Results are
-    restricted to the caller's own log entries (see vector_store.search).
-    kind="log" also keeps this log-only endpoint from surfacing DocumentChunk
-    matches now that the same index holds uploaded-document chunks too.
-    """
-    results = vector_store.search(body.question, current_user.id, k=5, kind="log")
-    source_ids = [r["id"] for r in results]
-
-    if not source_ids:
-        return QueryResponse(
-            answer=(
-                "No logs have been ingested yet. "
-                "Please upload a log file first."
-            ),
-            sources=[],
-        )
-
-    entries = (
-        db.query(models.LogEntry)
-        .filter(models.LogEntry.id.in_(source_ids))
-        .all()
-    )
-
-    # Sort the database entries to match the relevance order returned by the similarity search
-    entry_map = {e.id: e for e in entries}
-    ordered_entries = [entry_map[eid] for eid in source_ids if eid in entry_map]
-
-    answer = ai.answer_query(body.question, ordered_entries)
-    return QueryResponse(answer=answer, sources=source_ids)
-
-
-# ---------------------------------------------------------------------------
 # Incidents — listing & AI summaries (prd.md feature #6 — "AI incident
 # summaries"). Summaries are generated automatically at ingestion time in
 # processor.py via app.summarizer; resummarize_incident() below is the sole
@@ -536,8 +476,8 @@ def search_logs(
 ):
     """
     Plain SQL-filtered log search (prd.md: "search by IP, user, hostname or
-    event ID") — distinct from the semantic /api/v1/query and /api/v1/chat
-    endpoints. Filters are ANDed together and results are restricted to
+    event ID") — distinct from the semantic /api/v1/chat endpoint.
+    Filters are ANDed together and results are restricted to
     log files uploaded by the caller. At least one filter is required;
     without one this would be an unbounded scan of the user's whole log
     history rather than a search.
@@ -601,8 +541,8 @@ def get_log_entries(
     """
     Resolves a comma-separated list of LogEntry ids (e.g. ?ids=1,2,3) back
     into full log content. This exists specifically to resolve the raw
-    `sources: number[]` ids returned by POST /api/v1/chat and
-    /api/v1/query into renderable citations — those endpoints don't
+    `sources: number[]` ids returned by POST /api/v1/chat into renderable
+    citations — that endpoint doesn't
     attach timestamp/message to each source id, and GET
     /api/v1/logs/search can't be reused for this since it filters by
     field value, not by an id list. Results are restricted to log files

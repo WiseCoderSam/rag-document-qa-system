@@ -6,13 +6,6 @@ import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
-from dotenv import load_dotenv
-
-from pathlib import Path
-
-# Ensure environment variables are loaded (override any empty system variables)
-env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(dotenv_path=env_path, override=True)
 
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "")
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")

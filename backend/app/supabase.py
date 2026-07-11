@@ -5,11 +5,6 @@ from pathlib import Path
 import httpx
 from fastapi import UploadFile
 from supabase import create_client, Client
-from dotenv import load_dotenv
-
-# Ensure environment variables are loaded (override any empty system variables)
-env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(dotenv_path=env_path, override=True)
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")

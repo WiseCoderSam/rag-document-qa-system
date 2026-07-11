@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react"
 import type { Session } from "@supabase/supabase-js"
 import { Loader2 } from "lucide-react"
 
@@ -6,102 +5,36 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/components/ui/toast"
-import { apiFetch, deleteDocument, retryDocument, type DocumentOut } from "@/lib/api"
+import { deleteDocument, retryDocument, type DocumentOut } from "@/lib/api"
+import { statusBadgeClass, useUploadList } from "@/lib/useUploadList"
 
 interface DocumentsProps {
   session: Session
   onChatWithDocument: (documentId: number) => void
 }
 
-function statusBadgeClass(status: string): string {
-  if (status === "completed") return "bg-ok/15 text-ok"
-  if (status === "failed") return "bg-destructive/15 text-destructive"
-  return "bg-muted text-muted-foreground"
-}
-
 export function Documents({ session, onChatWithDocument }: DocumentsProps) {
-  const [documents, setDocuments] = useState<DocumentOut[]>([])
-  const [loadingList, setLoadingList] = useState(true)
-  const [listError, setListError] = useState<string | null>(null)
-
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // Tracks which row currently has a delete/retry request in flight, so only
-  // that row's buttons disable rather than the whole list.
-  const [pendingId, setPendingId] = useState<number | null>(null)
-
-  useEffect(() => {
-    apiFetch<DocumentOut[]>("/api/v1/documents", session)
-      .then(setDocuments)
-      .catch((err: Error) => setListError(err.message))
-      .finally(() => setLoadingList(false))
-  }, [session])
-
-  const handleUpload = async () => {
-    if (!selectedFile || uploading) return
-    setUploading(true)
-    setUploadError(null)
-    try {
-      const formData = new FormData()
-      formData.append("file", selectedFile)
-      // No Content-Type header here — the browser sets the multipart
-      // boundary automatically when body is a FormData instance.
-      const doc = await apiFetch<DocumentOut>("/api/v1/documents/upload", session, {
-        method: "POST",
-        body: formData,
-      })
-      setDocuments((prev) => [doc, ...prev])
-      setSelectedFile(null)
-      if (fileInputRef.current) fileInputRef.current.value = ""
-      toast.add({ title: "Upload started", description: `${doc.filename} is processing.`, type: "success" })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Upload failed."
-      setUploadError(message)
-      toast.add({ title: "Upload failed", description: message, type: "error" })
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const handleDelete = async (document: DocumentOut) => {
-    if (pendingId !== null) return
-    setPendingId(document.id)
-    try {
-      await deleteDocument(document.id, session)
-      setDocuments((prev) => prev.filter((d) => d.id !== document.id))
-      toast.add({ title: "Deleted", description: `${document.filename} was removed.`, type: "success" })
-    } catch (err) {
-      toast.add({
-        title: "Delete failed",
-        description: err instanceof Error ? err.message : "Could not delete this document.",
-        type: "error",
-      })
-    } finally {
-      setPendingId(null)
-    }
-  }
-
-  const handleRetry = async (document: DocumentOut) => {
-    if (pendingId !== null) return
-    setPendingId(document.id)
-    try {
-      const updated = await retryDocument(document.id, session)
-      setDocuments((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))
-      toast.add({ title: "Retrying", description: `${document.filename} is processing again.`, type: "success" })
-    } catch (err) {
-      toast.add({
-        title: "Retry failed",
-        description: err instanceof Error ? err.message : "Could not retry this document.",
-        type: "error",
-      })
-    } finally {
-      setPendingId(null)
-    }
-  }
+  const {
+    items: documents,
+    loadingList,
+    listError,
+    selectedFile,
+    setSelectedFile,
+    uploading,
+    uploadError,
+    fileInputRef,
+    pendingId,
+    handleUpload,
+    handleDelete,
+    handleRetry,
+  } = useUploadList<DocumentOut>({
+    session,
+    listPath: "/api/v1/documents",
+    uploadPath: "/api/v1/documents/upload",
+    deleteFn: deleteDocument,
+    retryFn: retryDocument,
+    noun: "document",
+  })
 
   return (
     <div className="flex flex-col gap-4">

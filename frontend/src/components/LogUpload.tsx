@@ -1,4 +1,3 @@
-import { useEffect, useRef, useState } from "react"
 import type { Session } from "@supabase/supabase-js"
 import { Loader2 } from "lucide-react"
 
@@ -6,101 +5,35 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { toast } from "@/components/ui/toast"
-import { apiFetch, deleteLogFile, retryLogFile, type LogFileOut } from "@/lib/api"
+import { deleteLogFile, retryLogFile, type LogFileOut } from "@/lib/api"
+import { statusBadgeClass, useUploadList } from "@/lib/useUploadList"
 
 interface LogUploadProps {
   session: Session
 }
 
-function statusBadgeClass(status: string): string {
-  if (status === "completed") return "bg-ok/15 text-ok"
-  if (status === "failed") return "bg-destructive/15 text-destructive"
-  return "bg-muted text-muted-foreground"
-}
-
 export function LogUpload({ session }: LogUploadProps) {
-  const [logFiles, setLogFiles] = useState<LogFileOut[]>([])
-  const [loadingList, setLoadingList] = useState(true)
-  const [listError, setListError] = useState<string | null>(null)
-
-  const [selectedFile, setSelectedFile] = useState<File | null>(null)
-  const [uploading, setUploading] = useState(false)
-  const [uploadError, setUploadError] = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
-
-  // Tracks which row currently has a delete/retry request in flight, so only
-  // that row's buttons disable rather than the whole list.
-  const [pendingId, setPendingId] = useState<number | null>(null)
-
-  useEffect(() => {
-    apiFetch<LogFileOut[]>("/api/v1/logs", session)
-      .then(setLogFiles)
-      .catch((err: Error) => setListError(err.message))
-      .finally(() => setLoadingList(false))
-  }, [session])
-
-  const handleUpload = async () => {
-    if (!selectedFile || uploading) return
-    setUploading(true)
-    setUploadError(null)
-    try {
-      const formData = new FormData()
-      formData.append("file", selectedFile)
-      // No Content-Type header here — the browser sets the multipart
-      // boundary automatically when body is a FormData instance.
-      const logFile = await apiFetch<LogFileOut>("/api/v1/logs/upload", session, {
-        method: "POST",
-        body: formData,
-      })
-      setLogFiles((prev) => [logFile, ...prev])
-      setSelectedFile(null)
-      if (fileInputRef.current) fileInputRef.current.value = ""
-      toast.add({ title: "Upload started", description: `${logFile.filename} is processing.`, type: "success" })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Upload failed."
-      setUploadError(message)
-      toast.add({ title: "Upload failed", description: message, type: "error" })
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const handleDelete = async (logFile: LogFileOut) => {
-    if (pendingId !== null) return
-    setPendingId(logFile.id)
-    try {
-      await deleteLogFile(logFile.id, session)
-      setLogFiles((prev) => prev.filter((f) => f.id !== logFile.id))
-      toast.add({ title: "Deleted", description: `${logFile.filename} was removed.`, type: "success" })
-    } catch (err) {
-      toast.add({
-        title: "Delete failed",
-        description: err instanceof Error ? err.message : "Could not delete this file.",
-        type: "error",
-      })
-    } finally {
-      setPendingId(null)
-    }
-  }
-
-  const handleRetry = async (logFile: LogFileOut) => {
-    if (pendingId !== null) return
-    setPendingId(logFile.id)
-    try {
-      const updated = await retryLogFile(logFile.id, session)
-      setLogFiles((prev) => prev.map((f) => (f.id === updated.id ? updated : f)))
-      toast.add({ title: "Retrying", description: `${logFile.filename} is processing again.`, type: "success" })
-    } catch (err) {
-      toast.add({
-        title: "Retry failed",
-        description: err instanceof Error ? err.message : "Could not retry this file.",
-        type: "error",
-      })
-    } finally {
-      setPendingId(null)
-    }
-  }
+  const {
+    items: logFiles,
+    loadingList,
+    listError,
+    selectedFile,
+    setSelectedFile,
+    uploading,
+    uploadError,
+    fileInputRef,
+    pendingId,
+    handleUpload,
+    handleDelete,
+    handleRetry,
+  } = useUploadList<LogFileOut>({
+    session,
+    listPath: "/api/v1/logs",
+    uploadPath: "/api/v1/logs/upload",
+    deleteFn: deleteLogFile,
+    retryFn: retryLogFile,
+    noun: "file",
+  })
 
   return (
     <div className="flex flex-col gap-4">

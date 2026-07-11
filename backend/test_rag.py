@@ -370,14 +370,6 @@ def test_get_embeddings_no_key():
         ai.GEMINI_API_KEY = original
 
 
-def test_answer_query_empty_context_returns_graceful_message():
-    """ai.answer_query with no context entries must not call Gemini at all."""
-    answer = ai.answer_query("any question", [])
-    assert "no logs" in answer.lower() or "not been ingested" in answer.lower(), (
-        f"Unexpected graceful message: {answer}"
-    )
-
-
 # ---------------------------------------------------------------------------
 # 3/4. POST /api/v1/chat (Task 4)
 # ---------------------------------------------------------------------------
