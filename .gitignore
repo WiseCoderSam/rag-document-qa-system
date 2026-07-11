@@ -38,3 +38,6 @@ Thumbs.db
 
 # Sample data ships with the repo (the blanket *.log above would exclude it)
 !backend/sample_data/*.log
+
+# Local npm shell override (Windows-specific script-shell path breaks Linux CI)
+frontend/.npmrc

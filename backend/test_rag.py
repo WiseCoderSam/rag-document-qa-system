@@ -24,6 +24,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 # Unset key so ai.py doesn't try to call Gemini during import.
 os.environ.pop("GEMINI_API_KEY", None)
 
+# Force a known HS256 secret before importing app.auth (below), so the suite
+# is hermetic: it must not depend on a real SUPABASE_JWT_SECRET from a local
+# .env, and CI has none. auth.py also refuses HS256 when the secret is empty,
+# and PyJWT rejects an empty HMAC key outright — both would break _auth_headers.
+os.environ["SUPABASE_JWT_SECRET"] = "test-secret-key-for-hs256-local-and-ci"
+
 import jwt
 import numpy as np
 from fastapi.testclient import TestClient
