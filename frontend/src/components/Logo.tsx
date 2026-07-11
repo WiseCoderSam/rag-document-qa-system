@@ -35,14 +35,20 @@ export function LogoMark({ className }: { className?: string }) {
 export function Logo({
   className,
   markClassName = "size-7",
+  wordmarkClassName = "text-xl",
 }: {
   className?: string
   markClassName?: string
+  wordmarkClassName?: string
 }) {
   return (
-    <span className={"inline-flex items-center gap-2 " + (className ?? "")}>
+    <span className={"inline-flex items-center gap-2.5 " + (className ?? "")}>
       <LogoMark className={markClassName} />
-      <span className="font-display text-lg leading-none font-semibold tracking-tight">
+      <span
+        className={
+          "font-display leading-none font-semibold tracking-tight " + wordmarkClassName
+        }
+      >
         Query<span className="text-primary">Hub</span>
       </span>
     </span>

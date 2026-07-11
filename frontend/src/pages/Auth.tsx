@@ -158,7 +158,7 @@ export function Auth() {
       <div className="flex flex-1 items-center justify-center p-4 py-10">
         <div className="grid w-full max-w-5xl items-center gap-10 lg:grid-cols-[1fr_minmax(0,24rem)]">
           <section className="flex flex-col gap-5">
-            <Logo markClassName="size-8" />
+            <Logo markClassName="size-9" wordmarkClassName="text-2xl" />
             <div className="flex flex-col gap-1">
               <p className="font-mono text-[11px] tracking-[0.25em] text-primary uppercase">
                 Security operations console
