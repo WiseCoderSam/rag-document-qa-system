@@ -58,8 +58,11 @@ function MailIcon() {
 // when both env vars are set, the auth page shows a one-click "Explore the
 // live demo" button that signs into this account. Exposing these in the
 // bundle is deliberate — the demo account is public by definition.
-const DEMO_EMAIL = import.meta.env.VITE_DEMO_EMAIL
-const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD
+// .trim() guards against a trailing newline/space in the env var (a common
+// paste artifact in dashboards) — without it, signIn gets "demo@gmail.com\n"
+// and Supabase rejects it as invalid credentials.
+const DEMO_EMAIL = import.meta.env.VITE_DEMO_EMAIL?.trim()
+const DEMO_PASSWORD = import.meta.env.VITE_DEMO_PASSWORD?.trim()
 
 const FEATURES = [
   "Upload & parse logs — syslog, JSON, and free-form auth formats",
