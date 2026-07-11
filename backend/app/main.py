@@ -11,6 +11,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from slowapi.util import get_remote_address
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .auth import CurrentUser, get_current_user
@@ -137,8 +138,32 @@ def read_root():
 # Auth
 # ---------------------------------------------------------------------------
 
+def provisioned_user(
+    current_user: CurrentUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CurrentUser:
+    """
+    Ensure a `users` row exists for the authenticated Supabase user, then
+    return the user. Supabase Auth is the source of truth for identity; the
+    app's `users` table only mirrors it and nothing else creates that row
+    (there's no signup webhook/trigger). Endpoints that INSERT rows with an
+    `uploaded_by` foreign key to `users.id` (the uploads) must depend on this
+    rather than get_current_user directly — otherwise the first action of a
+    brand-new user hits a foreign-key violation on Postgres (SQLite doesn't
+    enforce FKs by default, which is why this only surfaces in production).
+    Idempotent and safe under concurrent first-requests.
+    """
+    if db.get(models.User, current_user.id) is None:
+        db.add(models.User(id=current_user.id, email=current_user.email))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()  # created concurrently by another in-flight request
+    return current_user
+
+
 @app.get("/api/v1/users/me", response_model=CurrentUser)
-def read_current_user(current_user: CurrentUser = Depends(get_current_user)):
+def read_current_user(current_user: CurrentUser = Depends(provisioned_user)):
     return current_user
 
 
@@ -194,7 +219,7 @@ def upload_log_file(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(provisioned_user),
     db: Session = Depends(get_db),
 ):
     _validate_upload(file, LOG_UPLOAD_EXTENSIONS)
@@ -594,7 +619,7 @@ async def upload_document(
     request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    current_user: CurrentUser = Depends(get_current_user),
+    current_user: CurrentUser = Depends(provisioned_user),
     db: Session = Depends(get_db),
 ):
     _validate_upload(file, DOCUMENT_UPLOAD_EXTENSIONS)
