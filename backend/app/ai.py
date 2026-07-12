@@ -4,7 +4,9 @@ import time
 from google import genai
 from google.genai import types
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+# .strip(): a trailing newline/space pasted into the host env-var dashboard
+# makes every Gemini call fail auth (see the graceful fallbacks below).
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 # Initialize the client once at module level
 _client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
