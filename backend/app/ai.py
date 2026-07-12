@@ -142,6 +142,11 @@ def generate_chat_response(prompt: str, context: str = "") -> str:
             return response.text
         except Exception as e:  # noqa: BLE001 - provider raises many error types
             last_error = e
+            # Quota exhaustion (429) won't clear within a backoff window and
+            # retrying just burns more free-tier quota — give up immediately.
+            # Only genuine transient errors (503 overload, network) are retried.
+            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+                break
             if attempt < CHAT_MAX_RETRIES - 1:
                 time.sleep(2 ** attempt)  # 1s, 2s
     # All retries exhausted. Log the detail server-side only — raw provider
