@@ -6,9 +6,12 @@ import httpx
 from fastapi import UploadFile
 from supabase import create_client, Client
 
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
-BUCKET_NAME = os.getenv("SUPABASE_STORAGE_BUCKET", "logs")
+# .strip() guards against trailing newlines/spaces pasted into the host's
+# env-var dashboard — a bad SUPABASE_KEY silently fails storage auth and
+# falls back to local disk (see upload_to_supabase).
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "").strip()
+BUCKET_NAME = os.getenv("SUPABASE_STORAGE_BUCKET", "logs").strip()
 
 supabase_client: Client | None = None
 if SUPABASE_URL and SUPABASE_KEY:
