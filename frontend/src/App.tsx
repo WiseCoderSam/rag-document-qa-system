@@ -30,9 +30,12 @@ function WakeGate({ children }: { children: ReactNode }) {
     }, SHOW_LOADER_AFTER_MS)
 
     ;(async () => {
-      // Poll until healthy. On a cold start the fetch itself hangs until the
-      // instance wakes; if the host returns an early 5xx we retry.
+      // Poll until healthy (max 120s). On a cold start the fetch itself hangs
+      // until the instance wakes; if the host returns an early 5xx we retry.
+      // If it times out completely, fall through to "ready" to unblock the UI.
+      const deadline = Date.now() + 120000
       while (!cancelled && !(await checkHealth())) {
+        if (Date.now() > deadline) break
         await new Promise((r) => setTimeout(r, 2000))
       }
       if (cancelled) return
