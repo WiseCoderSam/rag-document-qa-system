@@ -1,6 +1,20 @@
 import type { Session } from "@supabase/supabase-js"
 
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000"
+export const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8000"
+
+/**
+ * True once the backend answers /health. On a free-tier host the instance
+ * sleeps after inactivity, so the first call after idle can hang ~30-50s
+ * while it cold-starts — the WakeScreen shows during that wait.
+ */
+export async function checkHealth(signal?: AbortSignal): Promise<boolean> {
+  try {
+    const res = await fetch(`${API_URL}/health`, { signal })
+    return res.ok
+  } catch {
+    return false
+  }
+}
 
 export class ApiError extends Error {
   status: number
